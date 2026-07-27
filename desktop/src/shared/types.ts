@@ -294,6 +294,37 @@ export interface ExtractionRunResult {
   remaining: number
 }
 
+export interface LetterView {
+  id: number
+  caseId: number
+  kind: string
+  bodyText: string
+  draftedAt: string
+  sentAt: string | null
+  docUrl: string | null
+  responseDueAt: string | null
+  responseReceivedAt: string | null
+  status: string
+}
+
+export interface MailScanResult {
+  messagesSeen: number
+  matched: number
+  clocksStopped: number
+}
+
+export interface SettlementQuote {
+  formula: 'ld' | 'legacy'
+  opening: number
+  compromiseLow: number
+  compromiseHigh: number
+  monthsOfMisuse: number
+  annualFee: number
+  vintage: AgreementVintage
+  selloffEnd: string | null
+  notes: string
+}
+
 export interface LicenseView {
   id: number
   licenseeName: string
@@ -345,4 +376,10 @@ export interface FafoApi {
   extractionRun(limit?: number): Promise<ExtractionRunResult>
   onExtractionProgress(cb: (p: ExtractionProgressEvent) => void): () => void
   listLicenses(): Promise<LicenseView[]>
+  listLetters(caseId: number): Promise<LetterView[]>
+  generateLetter(caseId: number, kind: 'enforcement' | 'referral_summary'): Promise<LetterView>
+  markLetterSent(letterId: number): Promise<LetterView>
+  exportLetterToDrive(letterId: number): Promise<LetterView>
+  scanMailNow(): Promise<MailScanResult>
+  quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
 }

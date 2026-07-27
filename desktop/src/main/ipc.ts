@@ -23,6 +23,17 @@ import {
 import { syncSignnow } from './services/signnowApi'
 import { extractionCounts, runExtraction } from './services/ingest/extractionRunner'
 import {
+  generateLetter,
+  getLetter,
+  letterToHtml,
+  listLetters,
+  markLetterSent
+} from './services/letters'
+import { createBrandedDoc } from './services/docsMcp'
+import { scanMail } from './services/graphMail'
+import { quoteSettlement } from './services/settlement'
+import { msAccessToken } from './services/msgraph'
+import {
   getSecret,
   hasSecret,
   setSecret,
@@ -161,6 +172,39 @@ export function registerIpc(): void {
     setSecret(SECRET_SIGNNOW_API_KEY, key.trim())
     return signnowStatus()
   })
+  ipcMain.handle('fafo:listLetters', (_e, caseId: number) => listLetters(db, caseId))
+  ipcMain.handle(
+    'fafo:generateLetter',
+    async (_e, caseId: number, kind: 'enforcement' | 'referral_summary') => {
+      const key = getSecret(SECRET_ANTHROPIC_API_KEY)
+      if (!key) throw new Error('No Anthropic API key stored — add one in Settings')
+      return generateLetter(db, key, caseId, kind)
+    }
+  )
+  ipcMain.handle('fafo:markLetterSent', (_e, letterId: number) => markLetterSent(db, letterId))
+  ipcMain.handle('fafo:exportLetterToDrive', async (_e, letterId: number) => {
+    const letter = getLetter(db, letterId)
+    if (!letter) throw new Error(`Letter ${letterId} not found`)
+    const c = db.prepare('SELECT title, drive_folder_id AS folderId FROM cases WHERE id = ?').get(
+      letter.caseId
+    ) as { title: string; folderId: string | null }
+    const label = letter.kind === 'enforcement' ? 'Enforcement Letter' : 'Legal Referral Summary'
+    const title = `FAFO ${label} — ${c.title} ${letter.draftedAt}`
+    const doc = await createBrandedDoc(title, letterToHtml(title, letter.bodyText), c.folderId)
+    const url = doc.editUrl ?? doc.pdfUrl
+    if (url) {
+      db.prepare('UPDATE letters SET doc_drive_id = ? WHERE id = ?').run(url, letterId)
+      db.prepare(
+        "INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'note', ?)"
+      ).run(letter.caseId, new Date().toISOString().slice(0, 10), `${label} exported to Drive: ${url}`)
+    }
+    return getLetter(db, letterId)
+  })
+  ipcMain.handle('fafo:scanMailNow', async () => scanMail(db, await msAccessToken(db)))
+  ipcMain.handle('fafo:quoteSettlement', (_e, caseId: number, observedUseThrough?: string) =>
+    quoteSettlement(db, caseId, observedUseThrough)
+  )
+
   ipcMain.handle('fafo:extractionStatus', () => {
     const counts = extractionCounts(db)
     const job = db

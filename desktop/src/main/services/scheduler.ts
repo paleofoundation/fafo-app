@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3'
 import { lifecycleRoll } from './lifecycle'
 import { syncSignnow } from './signnowApi'
 import { runExtraction } from './ingest/extractionRunner'
+import { scanMail } from './graphMail'
+import { msAccessToken } from './msgraph'
 import { getSecret, SECRET_ANTHROPIC_API_KEY, SECRET_SIGNNOW_API_KEY } from '../secrets'
 
 /**
@@ -13,7 +15,7 @@ import { getSecret, SECRET_ANTHROPIC_API_KEY, SECRET_SIGNNOW_API_KEY } from '../
 
 const TICK_MS = 15 * 60 * 1000
 
-const JOB_KINDS = ['lifecycle_roll', 'signnow_sync', 'license_extraction'] as const
+const JOB_KINDS = ['lifecycle_roll', 'signnow_sync', 'license_extraction', 'mail_scan'] as const
 type JobKind = (typeof JOB_KINDS)[number]
 
 function nextNightly(): string {
@@ -42,6 +44,17 @@ async function runJob(db: Database.Database, kind: JobKind): Promise<string> {
       if (!key) return 'skipped — no API key stored'
       const r = await syncSignnow(db, key)
       return `as ${r.identity.email}: ${r.apiTotal} groups, +${r.imported.licensesCreated} licenses, ${r.imported.licensesUpdated} updated`
+    }
+    case 'mail_scan': {
+      try {
+        const token = await msAccessToken(db)
+        const r = await scanMail(db, token)
+        return `${r.messagesSeen} messages, ${r.matched} matched to cases, ${r.clocksStopped} response clocks stopped`
+      } catch (err) {
+        // Not signed in to Outlook is an expected state, not a failure.
+        const m = err instanceof Error ? err.message : String(err)
+        return m.includes('Not signed in') ? 'skipped — Outlook not connected' : `error — ${m}`
+      }
     }
     case 'license_extraction': {
       const signnow = getSecret(SECRET_SIGNNOW_API_KEY)

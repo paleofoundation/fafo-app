@@ -3,6 +3,7 @@ import type {
   ExtractionProgressEvent,
   ExtractionRunResult,
   ExtractionStatus,
+  MailScanResult,
   MsAuthStatus,
   MsDeviceCode,
   SignnowStatus,
@@ -184,6 +185,8 @@ function SignnowCard(): React.JSX.Element {
 export function Settings(): React.JSX.Element {
   const [status, setStatus] = useState<MsAuthStatus | null>(null)
   const [ui, setUi] = useState<AuthUiState>({ phase: 'idle' })
+  const [scanBusy, setScanBusy] = useState(false)
+  const [scanResult, setScanResult] = useState<MailScanResult | null>(null)
 
   const refresh = useCallback(async () => {
     setStatus(await window.fafo.msStatus())
@@ -211,6 +214,17 @@ export function Settings(): React.JSX.Element {
     }
   }
 
+  async function scanNow(): Promise<void> {
+    setScanBusy(true)
+    setUi({ phase: 'idle' })
+    try {
+      setScanResult(await window.fafo.scanMailNow())
+    } catch (e) {
+      setUi({ phase: 'error', message: e instanceof Error ? e.message : String(e) })
+    }
+    setScanBusy(false)
+  }
+
   async function disconnect(): Promise<void> {
     await window.fafo.msSignOut()
     setUi({ phase: 'idle' })
@@ -236,9 +250,25 @@ export function Settings(): React.JSX.Element {
               clocks automatically. Sign-in persists via an encrypted token cache
               {status.cacheEncrypted ? ' (key in your macOS Keychain).' : ' — WARNING: encryption unavailable on this machine, sign-in lasts this session only.'}
             </p>
-            <button className="subtle" onClick={() => void disconnect()}>
-              Disconnect
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                className="outline"
+                disabled={scanBusy}
+                onClick={() => void scanNow()}
+              >
+                {scanBusy ? 'Scanning…' : 'Scan mail now'}
+              </button>
+              <button className="subtle" onClick={() => void disconnect()}>
+                Disconnect
+              </button>
+              {scanResult && (
+                <span className="deadline-meta">
+                  {scanResult.messagesSeen} messages · {scanResult.matched} matched ·{' '}
+                  {scanResult.clocksStopped} response clock
+                  {scanResult.clocksStopped === 1 ? '' : 's'} stopped
+                </span>
+              )}
+            </div>
           </div>
         )}
         {status && !status.connected && ui.phase !== 'code' && (

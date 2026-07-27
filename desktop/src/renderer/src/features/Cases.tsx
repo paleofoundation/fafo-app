@@ -5,7 +5,9 @@ import type {
   CaseStatus,
   Deadline,
   DeadlineKind,
-  NewCaseInput
+  LetterView,
+  NewCaseInput,
+  SettlementQuote
 } from '../../../shared/types'
 import { CASE_SOURCES, CASE_TYPES } from '../../../shared/types'
 
@@ -241,6 +243,10 @@ function CaseDetail({ id, onChanged }: { id: number; onChanged: () => Promise<vo
         </div>
       </div>
 
+      <SettlementCard caseId={id} />
+
+      <LettersCard caseId={id} onChanged={onChanged} />
+
       <div className="card">
         <h2>Timeline</h2>
         {data.events.map((e) => (
@@ -265,6 +271,191 @@ function CaseDetail({ id, onChanged }: { id: number; onChanged: () => Promise<vo
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+const money = (n: number): string => `$${Math.round(n).toLocaleString()}`
+
+function SettlementCard({ caseId }: { caseId: number }): React.JSX.Element {
+  const [quote, setQuote] = useState<SettlementQuote | null>(null)
+  const [through, setThrough] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setQuote(null)
+    setError(null)
+  }, [caseId])
+
+  async function run(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      setQuote(await window.fafo.quoteSettlement(caseId, through || undefined))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="card">
+      <h2>Settlement calculator</h2>
+      <div className="add-row">
+        <input
+          type="date"
+          value={through}
+          onChange={(e) => setThrough(e.target.value)}
+          title="Last confirmed date of use (defaults to today)"
+        />
+        <button className="outline" disabled={busy} onClick={() => void run()}>
+          {busy ? 'Calculating…' : 'Calculate'}
+        </button>
+      </div>
+      {error && <p style={{ color: 'var(--warn)', marginTop: 10, fontSize: 12.5 }}>{error}</p>}
+      {quote && (
+        <div style={{ marginTop: 10 }}>
+          <p style={{ fontSize: 15 }}>
+            <strong>{money(quote.opening)}</strong> opening ·{' '}
+            {money(quote.compromiseLow)}–{money(quote.compromiseHigh)} compromise
+          </p>
+          <p className="deadline-meta">
+            {quote.formula === 'ld'
+              ? `§E.3.d.ii liquidated damages: ${money(quote.annualFee)}/yr × ${quote.monthsOfMisuse} months`
+              : `Legacy (${quote.vintage}): current schedule × years of use`}
+          </p>
+          <p className="subtitle" style={{ marginTop: 6, marginBottom: 0 }}>{quote.notes}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LettersCard({
+  caseId,
+  onChanged
+}: {
+  caseId: number
+  onChanged: () => Promise<void>
+}): React.JSX.Element {
+  const [letters, setLetters] = useState<LetterView[]>([])
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState<number | null>(null)
+
+  const load = useCallback(async () => {
+    setLetters(await window.fafo.listLetters(caseId))
+  }, [caseId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  async function act(label: string, fn: () => Promise<unknown>): Promise<void> {
+    setBusy(label)
+    setError(null)
+    try {
+      await fn()
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(null)
+  }
+
+  return (
+    <div className="card">
+      <h2>Letters &amp; referrals</h2>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          className="outline"
+          disabled={busy !== null}
+          onClick={() =>
+            void act('amanda', () => window.fafo.generateLetter(caseId, 'enforcement'))
+          }
+        >
+          {busy === 'amanda' ? 'Drafting…' : 'Draft AMANDA letter'}
+        </button>
+        <button
+          className="outline"
+          disabled={busy !== null}
+          onClick={() =>
+            void act('summary', () => window.fafo.generateLetter(caseId, 'referral_summary'))
+          }
+        >
+          {busy === 'summary' ? 'Drafting…' : 'Draft Trestle referral'}
+        </button>
+      </div>
+      {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: 12.5 }}>{error}</p>}
+      {letters.length === 0 && <div className="empty">No drafts yet.</div>}
+      {letters.map((l) => (
+        <div key={l.id} style={{ borderTop: '1px solid var(--line)', paddingTop: 9, marginTop: 9 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <strong style={{ fontSize: 13 }}>
+              {l.kind === 'enforcement' ? 'AMANDA enforcement letter' : 'Legal referral summary'}
+            </strong>
+            <span className={`pill ${l.status === 'responded' ? 'done' : l.status === 'sent' ? 'progress' : 'later'}`}>
+              {l.status}
+            </span>
+            <span className="deadline-meta">drafted {l.draftedAt}</span>
+            {l.responseDueAt && !l.responseReceivedAt && (
+              <span className="deadline-meta">· response due {l.responseDueAt}</span>
+            )}
+            {l.responseReceivedAt && (
+              <span className="deadline-meta">· replied {l.responseReceivedAt}</span>
+            )}
+            <span style={{ flex: 1 }} />
+            <button className="subtle" onClick={() => setOpen(open === l.id ? null : l.id)}>
+              {open === l.id ? 'Hide' : 'Read'}
+            </button>
+            {!l.sentAt && (
+              <button
+                className="subtle"
+                disabled={busy !== null}
+                onClick={() => void act(`sent-${l.id}`, () => window.fafo.markLetterSent(l.id))}
+              >
+                Mark sent
+              </button>
+            )}
+            {l.docUrl ? (
+              <a href={l.docUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+                Open in Drive
+              </a>
+            ) : (
+              <button
+                className="subtle"
+                disabled={busy !== null}
+                onClick={() =>
+                  void act(`drive-${l.id}`, () => window.fafo.exportLetterToDrive(l.id))
+                }
+              >
+                {busy === `drive-${l.id}` ? 'Exporting…' : 'Export to Drive'}
+              </button>
+            )}
+          </div>
+          {open === l.id && (
+            <pre
+              style={{
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'Georgia, serif',
+                fontSize: 13,
+                lineHeight: 1.5,
+                background: 'var(--bg)',
+                border: '1px solid var(--line)',
+                borderRadius: 8,
+                padding: 12,
+                marginTop: 8,
+                maxHeight: 460,
+                overflowY: 'auto'
+              }}
+            >
+              {l.bodyText}
+            </pre>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

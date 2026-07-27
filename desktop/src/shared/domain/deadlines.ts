@@ -42,6 +42,21 @@ export function monthsOfContinuedUse(fromIso: string, toIso: string): number {
   return Math.max(months, 1)
 }
 
+/**
+ * Response-clock due date per the communication protocol (§15): "Respond by
+ * end of day Thursday." Returns the coming Thursday when it gives the
+ * recipient at least 3 days; otherwise the following Thursday.
+ */
+export function nextResponseThursday(sentIso: string): string {
+  const d = new Date(`${sentIso}T00:00:00Z`)
+  if (Number.isNaN(d.getTime())) throw new Error(`Invalid date: ${sentIso}`)
+  const THURSDAY = 4
+  let days = (THURSDAY - d.getUTCDay() + 7) % 7
+  if (days === 0) days = 7 // sent on a Thursday → next week's
+  if (days < 3) days += 7 // too tight → following Thursday
+  return addDays(sentIso, days)
+}
+
 export function isOverdue(dueIso: string, todayIso: string): boolean {
   return dueIso < todayIso
 }

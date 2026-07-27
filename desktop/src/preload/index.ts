@@ -37,7 +37,14 @@ const api: FafoApi = {
     ipcRenderer.on('fafo:extractionProgress', listener)
     return () => ipcRenderer.removeListener('fafo:extractionProgress', listener)
   },
-  listLicenses: () => ipcRenderer.invoke('fafo:listLicenses')
+  listLicenses: () => ipcRenderer.invoke('fafo:listLicenses'),
+  listLetters: (caseId) => ipcRenderer.invoke('fafo:listLetters', caseId),
+  generateLetter: (caseId, kind) => ipcRenderer.invoke('fafo:generateLetter', caseId, kind),
+  markLetterSent: (letterId) => ipcRenderer.invoke('fafo:markLetterSent', letterId),
+  exportLetterToDrive: (letterId) => ipcRenderer.invoke('fafo:exportLetterToDrive', letterId),
+  scanMailNow: () => ipcRenderer.invoke('fafo:scanMailNow'),
+  quoteSettlement: (caseId, observedUseThrough) =>
+    ipcRenderer.invoke('fafo:quoteSettlement', caseId, observedUseThrough)
 }
 
 contextBridge.exposeInMainWorld('fafo', api)
