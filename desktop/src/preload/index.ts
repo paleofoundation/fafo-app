@@ -24,7 +24,9 @@ const api: FafoApi = {
   importSnapshotStatus: () => ipcRenderer.invoke('fafo:importSnapshotStatus'),
   importSignnowSnapshot: () => ipcRenderer.invoke('fafo:importSignnowSnapshot'),
   importScanLocal: () => ipcRenderer.invoke('fafo:importScanLocal'),
-  importCommitLocal: () => ipcRenderer.invoke('fafo:importCommitLocal')
+  importCommitLocal: () => ipcRenderer.invoke('fafo:importCommitLocal'),
+  importScanSheets: () => ipcRenderer.invoke('fafo:importScanSheets'),
+  importCommitSheets: () => ipcRenderer.invoke('fafo:importCommitSheets')
 }
 
 contextBridge.exposeInMainWorld('fafo', api)

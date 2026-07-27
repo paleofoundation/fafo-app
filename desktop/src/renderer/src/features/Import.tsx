@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type {
   LocalCommitResult,
   LocalScanSummary,
+  SheetsCommitResult,
+  SheetsScanView,
   SnapshotImportResult,
   SnapshotStatus
 } from '../../../shared/types'
@@ -17,6 +19,9 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
   const [scan, setScan] = useState<LocalScanSummary | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
   const [commit, setCommit] = useState<LocalCommitResult | null>(null)
+  const [sheets, setSheets] = useState<SheetsScanView | null>(null)
+  const [sheetsBusy, setSheetsBusy] = useState(false)
+  const [sheetsCommit, setSheetsCommit] = useState<SheetsCommitResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -58,6 +63,31 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
       setError(e instanceof Error ? e.message : String(e))
     }
     setScanBusy(false)
+  }
+
+  async function runSheetsScan(): Promise<void> {
+    setSheetsBusy(true)
+    setError(null)
+    setSheetsCommit(null)
+    try {
+      setSheets(await window.fafo.importScanSheets())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setSheetsBusy(false)
+  }
+
+  async function runSheetsCommit(): Promise<void> {
+    setSheetsBusy(true)
+    setError(null)
+    try {
+      setSheetsCommit(await window.fafo.importCommitSheets())
+      setSheets(null)
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setSheetsBusy(false)
   }
 
   return (
@@ -106,6 +136,84 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
               </span>
             )}
           </p>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Drive sheets — Infringement Cases + 2025 Infringement</h2>
+        <p className="subtitle">
+          Statuses, Trestle submission dates, and settlement notes from your tracking sheets attach
+          to case timelines. Status conflicts are flagged for review — the sheet never overwrites
+          the app.
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="outline" disabled={sheetsBusy} onClick={() => void runSheetsScan()}>
+            {sheetsBusy && !sheets ? 'Scanning…' : 'Scan sheets (dry run)'}
+          </button>
+          {sheets && (
+            <button
+              className="outline"
+              style={{ borderColor: 'var(--ok)', color: 'var(--ok)' }}
+              disabled={sheetsBusy}
+              onClick={() => void runSheetsCommit()}
+            >
+              Commit {sheets.totals.rows - sheets.totals.alreadyImported} rows
+            </button>
+          )}
+        </div>
+        {sheetsCommit && (
+          <p style={{ marginTop: 10 }}>
+            <span className="pill done">committed</span> {sheetsCommit.eventsAttached} timeline
+            events attached ({sheetsCommit.conflictsAttached} flagged as conflicts),{' '}
+            {sheetsCommit.casesCreated} cases created, {sheetsCommit.licenseesCreated} licensees
+            created, {sheetsCommit.skipped} already imported.
+          </p>
+        )}
+        {sheets && (
+          <table style={{ marginTop: 12 }}>
+            <thead>
+              <tr>
+                <th>Case</th>
+                <th>Sheet status</th>
+                <th>Dates</th>
+                <th>Action</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sheets.rows.map((r, i) => (
+                <tr key={i} style={r.alreadyImported ? { opacity: 0.45 } : undefined}>
+                  <td>
+                    <strong>{r.caseName}</strong>
+                    {r.matchedCaseTitle && r.matchedCaseTitle !== r.caseName && (
+                      <div className="deadline-meta">→ {r.matchedCaseTitle}</div>
+                    )}
+                  </td>
+                  <td style={{ fontSize: 12.5 }}>
+                    {r.status} <span className="deadline-meta">→ {r.mappedStatus}</span>
+                  </td>
+                  <td style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}>
+                    {r.startDate ?? '—'}
+                    {r.endDate ? ` → ${r.endDate}` : ''}
+                  </td>
+                  <td>
+                    {r.alreadyImported ? (
+                      <span className="pill later">imported</span>
+                    ) : r.action === 'attach' ? (
+                      <span className="pill done">attach</span>
+                    ) : r.action === 'create' ? (
+                      <span className="pill later">new case</span>
+                    ) : (
+                      <span className="pill overdue">
+                        conflict: app says {r.currentCaseStatus}
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ fontSize: 12.5 }}>{r.notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

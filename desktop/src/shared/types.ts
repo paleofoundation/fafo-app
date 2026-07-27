@@ -227,6 +227,33 @@ export interface SnapshotStatus {
   total?: number
 }
 
+export interface SheetScanRowView {
+  sheetTitle: string
+  caseName: string
+  status: string
+  startDate: string | null
+  endDate: string | null
+  notes: string | null
+  mappedStatus: 'Open' | 'In Progress' | 'Resolved'
+  matchedCaseTitle: string | null
+  currentCaseStatus: string | null
+  action: 'attach' | 'create' | 'conflict-review'
+  alreadyImported: boolean
+}
+
+export interface SheetsScanView {
+  rows: SheetScanRowView[]
+  totals: { rows: number; attach: number; create: number; conflicts: number; alreadyImported: number }
+}
+
+export interface SheetsCommitResult {
+  eventsAttached: number
+  casesCreated: number
+  licenseesCreated: number
+  conflictsAttached: number
+  skipped: number
+}
+
 /** The typed surface exposed to the renderer via contextBridge as window.fafo. */
 export interface FafoApi {
   listCases(): Promise<CaseRow[]>
@@ -251,4 +278,8 @@ export interface FafoApi {
   importScanLocal(): Promise<LocalScanSummary>
   /** Commits the most recent scan — only callable after importScanLocal. */
   importCommitLocal(): Promise<LocalCommitResult>
+  /** Dry-run of the Drive infringement sheets snapshot. */
+  importScanSheets(): Promise<SheetsScanView>
+  /** Commits the most recent sheets scan. */
+  importCommitSheets(): Promise<SheetsCommitResult>
 }

@@ -6,6 +6,7 @@ import {
   parseCaseFolderName,
   parseEvidenceFolderName
 } from '../../../shared/domain/naming'
+import { findLicenseeByName } from './matching'
 
 /**
  * Importer for the historical archive at
@@ -158,7 +159,6 @@ export function scanLocalCases(db: Database.Database, root = DEFAULT_CASES_ROOT)
     throw new Error(`Infringement Cases root not found: ${root}`)
   }
 
-  const findLicensee = db.prepare('SELECT id, name FROM licensees WHERE normalized_name = ?')
   const findCaseByFolder = db.prepare('SELECT id FROM cases WHERE local_folder_path = ?')
   const findCaseByLicensee = db.prepare(
     "SELECT id FROM cases WHERE licensee_id = ? ORDER BY status = 'Resolved', opened_at DESC LIMIT 1"
@@ -173,14 +173,15 @@ export function scanLocalCases(db: Database.Database, root = DEFAULT_CASES_ROOT)
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
       const folderPath = path.join(bucketPath, entry.name)
       const { primaryName, relatedEntity } = parseCaseFolderName(entry.name)
-      const match = findLicensee.get(normalizeCompanyName(primaryName)) as
-        | { id: number; name: string }
-        | undefined
+      const match = findLicenseeByName(db, primaryName)
       const existingCase = match
         ? ((findCaseByLicensee.get(match.id) as { id: number } | undefined) ?? null)
         : null
       const alreadyImported = findCaseByFolder.get(folderPath) !== undefined
       const walked = walkCaseFolder(folderPath)
+      if (match && !match.exact) {
+        walked.flags.push(`fuzzy licensee match: "${primaryName}" → "${match.name}" — verify`)
+      }
 
       folders.push({
         folderPath,

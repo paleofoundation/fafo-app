@@ -13,6 +13,13 @@ import {
   readSnapshot,
   snapshotPath
 } from './services/ingest/signnowSnapshot'
+import {
+  commitSheets,
+  scanSheets,
+  sheetsExportPath,
+  type SheetsExport,
+  type SheetsScanResult
+} from './services/ingest/sheetsImport'
 import type {
   CasePatch,
   EventKind,
@@ -103,6 +110,24 @@ export function registerIpc(): void {
     if (!lastScan) throw new Error('Run the dry-run scan first — nothing staged to commit')
     const result = commitLocalCases(db, lastScan)
     lastScan = null
+    return result
+  })
+
+  let lastSheetsScan: SheetsScanResult | null = null
+  ipcMain.handle('fafo:importScanSheets', () => {
+    const file = sheetsExportPath(app.getPath('userData'))
+    if (!fs.existsSync(file)) throw new Error(`Sheets export not found at ${file}`)
+    const exp = JSON.parse(fs.readFileSync(file, 'utf8')) as SheetsExport
+    lastSheetsScan = scanSheets(db, exp)
+    return {
+      rows: lastSheetsScan.rows.map(({ matchedCaseId: _m, ...view }) => view),
+      totals: lastSheetsScan.totals
+    }
+  })
+  ipcMain.handle('fafo:importCommitSheets', () => {
+    if (!lastSheetsScan) throw new Error('Run the sheets dry-run first — nothing staged to commit')
+    const result = commitSheets(db, lastSheetsScan)
+    lastSheetsScan = null
     return result
   })
 }
