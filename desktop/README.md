@@ -41,3 +41,25 @@ build first).
   notifications at launch, four active matters seeded with known dates.
 - M2 next: SignNow backfill + local Infringement Cases import + review queues.
   See the approved plan for M2–M5.
+
+## Building the desktop app (double-clickable)
+
+```bash
+export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+cd desktop
+npm run install-app     # builds and installs to /Applications/FAFO.app
+```
+
+`npm run package` alone leaves the bundle in `desktop/release/mac-arm64/FAFO.app`
+(gitignored). `install-app` copies it over `/Applications/FAFO.app`; the Desktop
+alias points there, so it picks up new builds automatically.
+
+The icon is generated into `build/icon.png` (navy tile, block "FAFO"). The app is
+ad-hoc signed only — fine for a locally built single-user tool, and it carries no
+quarantine attribute because it was never downloaded. It is **not** notarized, so
+it would warn if copied to another Mac.
+
+Packaged and dev builds share the same data directory
+(`~/Library/Application Support/FAFO`), so the database, encrypted secrets, and
+Outlook token are identical in both. Only one may run at a time — the
+single-instance lock makes the second launch hand off to the first.

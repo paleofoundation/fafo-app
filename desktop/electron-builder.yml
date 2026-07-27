@@ -1,0 +1,24 @@
+appId: org.paleofoundation.fafo
+productName: FAFO
+copyright: Paleo Certified, Inc. dba The Paleo Foundation
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+# better-sqlite3 is native and must be rebuilt against Electron's ABI.
+npmRebuild: true
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+
+mac:
+  category: public.app-category.business
+  icon: build/icon.png
+  target:
+    - dir
+  # Single-user internal tool: ad-hoc signed, no notarization.
+  identity: null
