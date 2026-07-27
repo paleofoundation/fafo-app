@@ -270,6 +270,44 @@ export interface SignnowSyncNowResult {
   activeLicenses: number
 }
 
+export interface ExtractionStatus {
+  total: number
+  extracted: number
+  pending: number
+  keysPresent: boolean
+  lastJobStatus: string | null
+}
+
+export interface ExtractionProgressEvent {
+  processed: number
+  total: number
+  current: string
+  ok: number
+  failed: number
+}
+
+export interface ExtractionRunResult {
+  processed: number
+  ok: number
+  failed: number
+  errors: string[]
+  remaining: number
+}
+
+export interface LicenseView {
+  id: number
+  licenseeName: string
+  agreementRef: string | null
+  vintage: AgreementVintage
+  termStart: string | null
+  termEnd: string | null
+  annualFeeCents: number | null
+  revenueBand: string | null
+  status: string
+  extractionConfidence: number | null
+  markCodes: string[]
+}
+
 /** The typed surface exposed to the renderer via contextBridge as window.fafo. */
 export interface FafoApi {
   listCases(): Promise<CaseRow[]>
@@ -302,4 +340,9 @@ export interface FafoApi {
   /** Store/replace the SignNow API key (empty string clears it). */
   signnowSetKey(key: string): Promise<SignnowStatus>
   signnowSyncNow(): Promise<SignnowSyncNowResult>
+  extractionStatus(): Promise<ExtractionStatus>
+  /** Runs one extraction batch (chunked); progress arrives via onExtractionProgress. */
+  extractionRun(limit?: number): Promise<ExtractionRunResult>
+  onExtractionProgress(cb: (p: ExtractionProgressEvent) => void): () => void
+  listLicenses(): Promise<LicenseView[]>
 }

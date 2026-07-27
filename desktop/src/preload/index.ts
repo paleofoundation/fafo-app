@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { FafoApi, MsAuthEvent } from '../shared/types'
+import type { ExtractionProgressEvent, FafoApi, MsAuthEvent } from '../shared/types'
 
 const api: FafoApi = {
   listCases: () => ipcRenderer.invoke('fafo:listCases'),
@@ -29,7 +29,15 @@ const api: FafoApi = {
   importCommitSheets: () => ipcRenderer.invoke('fafo:importCommitSheets'),
   signnowStatus: () => ipcRenderer.invoke('fafo:signnowStatus'),
   signnowSetKey: (key) => ipcRenderer.invoke('fafo:signnowSetKey', key),
-  signnowSyncNow: () => ipcRenderer.invoke('fafo:signnowSyncNow')
+  signnowSyncNow: () => ipcRenderer.invoke('fafo:signnowSyncNow'),
+  extractionStatus: () => ipcRenderer.invoke('fafo:extractionStatus'),
+  extractionRun: (limit) => ipcRenderer.invoke('fafo:extractionRun', limit),
+  onExtractionProgress: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, p: ExtractionProgressEvent): void => cb(p)
+    ipcRenderer.on('fafo:extractionProgress', listener)
+    return () => ipcRenderer.removeListener('fafo:extractionProgress', listener)
+  },
+  listLicenses: () => ipcRenderer.invoke('fafo:listLicenses')
 }
 
 contextBridge.exposeInMainWorld('fafo', api)

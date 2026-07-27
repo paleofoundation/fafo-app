@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type {
+  ExtractionProgressEvent,
+  ExtractionRunResult,
+  ExtractionStatus,
   MsAuthStatus,
   MsDeviceCode,
   SignnowStatus,
@@ -10,6 +13,86 @@ type AuthUiState =
   | { phase: 'idle' }
   | { phase: 'code'; code: MsDeviceCode }
   | { phase: 'error'; message: string }
+
+function ExtractionCard(): React.JSX.Element {
+  const [status, setStatus] = useState<ExtractionStatus | null>(null)
+  const [progress, setProgress] = useState<ExtractionProgressEvent | null>(null)
+  const [result, setResult] = useState<ExtractionRunResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setStatus(await window.fafo.extractionStatus())
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    return window.fafo.onExtractionProgress(setProgress)
+  }, [refresh])
+
+  async function run(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setResult(null)
+    try {
+      setResult(await window.fafo.extractionRun(40))
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+    setProgress(null)
+  }
+
+  return (
+    <div className="card">
+      <h2>License term extraction — Claude reads the agreement PDFs</h2>
+      {status && (
+        <p className="subtitle">
+          {status.extracted} of {status.total} licenses have trusted term dates ·{' '}
+          {status.pending} pending. Term dates, fees, marks, and clause-based vintage (liquidated
+          damages / sell-off presence) come from the executed PDFs; each result carries a
+          confidence score, and anything below 70% stays flagged for review.
+          {status.lastJobStatus && ` Nightly job: ${status.lastJobStatus}`}
+        </p>
+      )}
+      <button
+        className="outline"
+        disabled={busy || !status?.keysPresent || status?.pending === 0}
+        onClick={() => void run()}
+      >
+        {busy ? 'Extracting…' : `Extract next ${Math.min(40, status?.pending ?? 40)}`}
+      </button>
+      {!status?.keysPresent && (
+        <span className="deadline-meta" style={{ marginLeft: 10 }}>
+          Needs both the SignNow and Anthropic API keys.
+        </span>
+      )}
+      {busy && progress && (
+        <p style={{ marginTop: 10 }}>
+          <span className="pill progress">
+            {progress.processed}/{progress.total}
+          </span>{' '}
+          {progress.current} — {progress.ok} ok, {progress.failed} failed
+        </p>
+      )}
+      {result && (
+        <p style={{ marginTop: 10 }}>
+          <span className="pill done">batch done</span> {result.ok} extracted, {result.failed}{' '}
+          failed, {result.remaining} remaining.
+          {result.errors.length > 0 && (
+            <span style={{ color: 'var(--warn)' }}>
+              {' '}
+              {result.errors.slice(0, 3).join(' · ')}
+              {result.errors.length > 3 ? ' …' : ''}
+            </span>
+          )}
+        </p>
+      )}
+      {error && <p style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</p>}
+    </div>
+  )
+}
 
 function SignnowCard(): React.JSX.Element {
   const [status, setStatus] = useState<SignnowStatus | null>(null)
@@ -222,11 +305,13 @@ export function Settings(): React.JSX.Element {
 
       <SignnowCard />
 
+      <ExtractionCard />
+
       <div className="card">
         <h2>Coming in later milestones</h2>
         <p className="subtitle" style={{ marginBottom: 0 }}>
-          Anthropic API key (letters, extraction, vision — M4) · patrol schedule (M3). Each appears
-          here when its milestone lands.
+          Screenshot patrol schedule + mark detection (M3) · AMANDA letter generation (M4). Each
+          appears here when its milestone lands.
         </p>
       </div>
     </div>

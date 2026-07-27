@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3'
 import { lifecycleRoll } from './lifecycle'
 import { syncSignnow } from './signnowApi'
-import { getSecret, SECRET_SIGNNOW_API_KEY } from '../secrets'
+import { runExtraction } from './ingest/extractionRunner'
+import { getSecret, SECRET_ANTHROPIC_API_KEY, SECRET_SIGNNOW_API_KEY } from '../secrets'
 
 /**
  * Job scheduler: jobs table is the source of truth; anything overdue runs at
@@ -12,7 +13,7 @@ import { getSecret, SECRET_SIGNNOW_API_KEY } from '../secrets'
 
 const TICK_MS = 15 * 60 * 1000
 
-const JOB_KINDS = ['lifecycle_roll', 'signnow_sync'] as const
+const JOB_KINDS = ['lifecycle_roll', 'signnow_sync', 'license_extraction'] as const
 type JobKind = (typeof JOB_KINDS)[number]
 
 function nextNightly(): string {
@@ -41,6 +42,13 @@ async function runJob(db: Database.Database, kind: JobKind): Promise<string> {
       if (!key) return 'skipped — no API key stored'
       const r = await syncSignnow(db, key)
       return `as ${r.identity.email}: ${r.apiTotal} groups, +${r.imported.licensesCreated} licenses, ${r.imported.licensesUpdated} updated`
+    }
+    case 'license_extraction': {
+      const signnow = getSecret(SECRET_SIGNNOW_API_KEY)
+      const anthropic = getSecret(SECRET_ANTHROPIC_API_KEY)
+      if (!signnow || !anthropic) return 'skipped — SignNow and Anthropic keys both required'
+      const r = await runExtraction(db, { signnow, anthropic }, 40)
+      return `extracted ${r.ok}/${r.processed}, ${r.failed} failed, ${r.remaining} remaining`
     }
   }
 }

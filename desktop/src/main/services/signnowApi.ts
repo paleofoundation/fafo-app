@@ -121,6 +121,22 @@ export async function fetchAllDocuments(key: string): Promise<SnapshotGroup[]> {
   return out
 }
 
+/** Download the (collapsed = signatures flattened) PDF for a document. */
+export async function downloadDocumentPdf(key: string, documentId: string): Promise<Buffer> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(`${BASE}/document/${documentId}/download?type=collapsed`, {
+      headers: { Authorization: `Bearer ${key}` }
+    })
+    if (res.status === 429 && attempt <= 4) {
+      const retryAfter = parseInt(res.headers.get('retry-after') ?? '', 10)
+      await sleep((Number.isFinite(retryAfter) ? retryAfter : 15 * attempt) * 1000)
+      continue
+    }
+    if (!res.ok) throw new Error(`SignNow download ${res.status} for document ${documentId}`)
+    return Buffer.from(await res.arrayBuffer())
+  }
+}
+
 export interface SignnowSyncOutcome {
   identity: SignnowIdentity
   apiTotal: number

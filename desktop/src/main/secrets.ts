@@ -84,3 +84,4 @@ export function migrateBootstrapSecrets(): void {
 }
 
 export const SECRET_SIGNNOW_API_KEY = 'signnow.apiKey'
+export const SECRET_ANTHROPIC_API_KEY = 'anthropic.apiKey'

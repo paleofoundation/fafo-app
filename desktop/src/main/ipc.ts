@@ -21,7 +21,14 @@ import {
   type SheetsScanResult
 } from './services/ingest/sheetsImport'
 import { syncSignnow } from './services/signnowApi'
-import { getSecret, hasSecret, setSecret, SECRET_SIGNNOW_API_KEY } from './secrets'
+import { extractionCounts, runExtraction } from './services/ingest/extractionRunner'
+import {
+  getSecret,
+  hasSecret,
+  setSecret,
+  SECRET_ANTHROPIC_API_KEY,
+  SECRET_SIGNNOW_API_KEY
+} from './secrets'
 import type {
   CasePatch,
   EventKind,
@@ -154,6 +161,54 @@ export function registerIpc(): void {
     setSecret(SECRET_SIGNNOW_API_KEY, key.trim())
     return signnowStatus()
   })
+  ipcMain.handle('fafo:extractionStatus', () => {
+    const counts = extractionCounts(db)
+    const job = db
+      .prepare("SELECT last_status FROM jobs WHERE kind = 'license_extraction'")
+      .get() as { last_status: string | null } | undefined
+    return {
+      ...counts,
+      keysPresent: hasSecret(SECRET_SIGNNOW_API_KEY) && hasSecret(SECRET_ANTHROPIC_API_KEY),
+      lastJobStatus: job?.last_status ?? null
+    }
+  })
+  ipcMain.handle('fafo:extractionRun', async (_e, limit?: number) => {
+    const signnow = getSecret(SECRET_SIGNNOW_API_KEY)
+    const anthropic = getSecret(SECRET_ANTHROPIC_API_KEY)
+    if (!signnow || !anthropic) {
+      throw new Error('SignNow and Anthropic API keys are both required — add them in Settings')
+    }
+    return runExtraction(db, { signnow, anthropic }, limit ?? 40, (p) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('fafo:extractionProgress', p)
+      }
+    })
+  })
+  ipcMain.handle('fafo:listLicenses', () =>
+    (
+      db
+        .prepare(
+          `SELECT li.id, l.name AS licenseeName, li.agreement_ref AS agreementRef,
+                  li.vintage, li.term_start AS termStart, li.term_end AS termEnd,
+                  li.annual_fee_cents AS annualFeeCents, li.revenue_band AS revenueBand,
+                  li.status, li.extraction_confidence AS extractionConfidence
+           FROM licenses li JOIN licensees l ON l.id = li.licensee_id
+           ORDER BY li.status = 'active' DESC, li.term_end IS NULL, li.term_end DESC`
+        )
+        .all() as Array<Record<string, unknown> & { id: number }>
+    ).map((row) => ({
+      ...row,
+      markCodes: (
+        db
+          .prepare(
+            `SELECT m.code FROM license_marks lm JOIN marks m ON m.id = lm.mark_id
+             WHERE lm.license_id = ?`
+          )
+          .all(row.id) as Array<{ code: string }>
+      ).map((r) => r.code)
+    }))
+  )
+
   ipcMain.handle('fafo:signnowSyncNow', async () => {
     const key = getSecret(SECRET_SIGNNOW_API_KEY)
     if (!key) throw new Error('No SignNow API key stored — add one below first')
