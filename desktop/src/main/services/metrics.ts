@@ -102,6 +102,149 @@ export function metricsSummary(db: Database.Database): MetricsSummary {
 }
 
 /**
+ * Legacy settlement entries (v1 parity). v1 kept these in localStorage under
+ * `fafo_legacy_payments` so historical income that predates the case file
+ * still counted; v2 stores them as payment rows with legacy = 1.
+ */
+export interface LegacyEntryInput {
+  label: string
+  type: string
+  amountCents: number
+  year: number
+  receivedDate?: string | null
+  resolvedBy?: 'JP' | 'Trestle' | null
+}
+
+export interface LegacyEntry extends LegacyEntryInput {
+  id: number
+}
+
+export function addLegacyPayment(db: Database.Database, input: LegacyEntryInput): LegacyEntry {
+  const id = Number(
+    db
+      .prepare(
+        `INSERT INTO payments (case_id, amount_cents, received_date, received, legacy, resolved_by, year, source_label)
+         VALUES (NULL, ?, ?, 1, 1, ?, ?, ?)`
+      )
+      .run(
+        input.amountCents,
+        input.receivedDate ?? null,
+        input.resolvedBy ?? null,
+        input.year,
+        input.label
+      ).lastInsertRowid
+  )
+  return { ...input, id }
+}
+
+export function listLegacyPayments(db: Database.Database): LegacyEntry[] {
+  return (
+    db
+      .prepare(
+        `SELECT id, source_label AS label, amount_cents AS amountCents, year,
+                received_date AS receivedDate, resolved_by AS resolvedBy
+         FROM payments WHERE legacy = 1 ORDER BY year DESC, id DESC`
+      )
+      .all() as Array<Omit<LegacyEntry, 'type'>>
+  ).map((r) => ({ ...r, type: 'Legacy entry' }))
+}
+
+export function removeLegacyPayment(db: Database.Database, id: number): void {
+  db.prepare('DELETE FROM payments WHERE id = ? AND legacy = 1').run(id)
+}
+
+/**
+ * Settlement amounts recorded as free text on a case (typically from the
+ * tracking-sheet import) that have no payment row, so they are invisible to
+ * the income rollups.
+ *
+ * These are SUGGESTIONS ONLY. Settlement text is ambiguous — "Paid settlement,
+ * 17k" is money received, while "$30,000 opening / $25,000 compromise" is a
+ * negotiating position and "$30,000 cessation OR $40,000 new license" is a
+ * pair of options. Converting them automatically would invent income, so each
+ * is classified and must be confirmed by a human before it becomes a payment.
+ */
+export interface SettlementSuggestion {
+  caseId: number
+  caseTitle: string
+  settlementText: string
+  suggestedCents: number | null
+  /** 'received' — text asserts payment; 'position' — a demand/offer, likely not received */
+  reading: 'received' | 'position'
+  year: number
+}
+
+const POSITION_WORDS =
+  /\b(opening|compromise|demand|suggested|proposed|offer|preferred|position|OR|per agreement|TBD|pending|litigation)\b/i
+const RECEIVED_WORDS = /\b(paid|settled|received|completed|collected|recovered)\b/i
+
+export function parseSettlementAmountCents(text: string): number | null {
+  // "17k", "7.5k"
+  const k = text.match(/(\d+(?:\.\d+)?)\s*k\b/i)
+  if (k) return Math.round(parseFloat(k[1]!) * 1000 * 100)
+  // "$10,000.00"
+  const d = text.match(/\$\s?([\d,]+(?:\.\d{1,2})?)/)
+  if (d) return Math.round(parseFloat(d[1]!.replace(/,/g, '')) * 100)
+  return null
+}
+
+export function unrecordedSettlements(db: Database.Database): SettlementSuggestion[] {
+  const rows = db
+    .prepare(
+      `SELECT c.id AS caseId, c.title AS caseTitle, c.settlement_position AS text,
+              COALESCE(c.resolved_at, c.opened_at) AS whenAt
+       FROM cases c
+       WHERE c.settlement_position IS NOT NULL AND TRIM(c.settlement_position) != ''
+         AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.case_id = c.id)
+       ORDER BY c.title`
+    )
+    .all() as Array<{ caseId: number; caseTitle: string; text: string; whenAt: string }>
+
+  const out: SettlementSuggestion[] = []
+  for (const r of rows) {
+    const cents = parseSettlementAmountCents(r.text)
+    if (cents === null) continue
+    // A position reading wins over a received reading when both appear, so an
+    // unpaid demand is never silently booked as income.
+    const reading: 'received' | 'position' = POSITION_WORDS.test(r.text)
+      ? 'position'
+      : RECEIVED_WORDS.test(r.text)
+        ? 'received'
+        : 'position'
+    out.push({
+      caseId: r.caseId,
+      caseTitle: r.caseTitle,
+      settlementText: r.text,
+      suggestedCents: cents,
+      reading,
+      year: parseInt(r.whenAt.slice(0, 4), 10)
+    })
+  }
+  return out
+}
+
+/** Confirm a suggestion (possibly edited) as a real received payment. */
+export function confirmSettlementPayment(
+  db: Database.Database,
+  caseId: number,
+  amountCents: number,
+  receivedDate: string,
+  resolvedBy: 'JP' | 'Trestle' | null
+): void {
+  db.prepare(
+    `INSERT INTO payments (case_id, amount_cents, received_date, received, legacy, resolved_by, year)
+     VALUES (?, ?, ?, 1, 0, ?, ?)`
+  ).run(caseId, amountCents, receivedDate, resolvedBy, parseInt(receivedDate.slice(0, 4), 10))
+  db.prepare(
+    "INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'payment', ?)"
+  ).run(
+    caseId,
+    receivedDate,
+    `Payment of $${(amountCents / 100).toLocaleString()} recorded as received (confirmed from the settlement note).`
+  )
+}
+
+/**
  * Per-mark policing record (M5, improvement 19). Supports the validity /
  * anti-abandonment posture: every enforcement action taken for a given mark,
  * in date order, with outcomes.

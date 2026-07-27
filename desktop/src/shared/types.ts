@@ -351,6 +351,34 @@ export interface MetricsSummary {
   resolvedCases: number
 }
 
+export interface LegacyEntry {
+  id: number
+  label: string
+  type: string
+  amountCents: number
+  year: number
+  receivedDate?: string | null
+  resolvedBy?: 'JP' | 'Trestle' | null
+}
+
+export interface LegacyEntryInput {
+  label: string
+  type: string
+  amountCents: number
+  year: number
+  receivedDate?: string | null
+  resolvedBy?: 'JP' | 'Trestle' | null
+}
+
+export interface SettlementSuggestion {
+  caseId: number
+  caseTitle: string
+  settlementText: string
+  suggestedCents: number | null
+  reading: 'received' | 'position'
+  year: number
+}
+
 export interface ExportResult {
   path: string
   driveUrl: string | null
@@ -414,6 +442,16 @@ export interface FafoApi {
   scanMailNow(): Promise<MailScanResult>
   quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
   metricsSummary(): Promise<MetricsSummary>
+  listLegacyPayments(): Promise<LegacyEntry[]>
+  addLegacyPayment(input: LegacyEntryInput): Promise<LegacyEntry>
+  removeLegacyPayment(id: number): Promise<void>
+  unrecordedSettlements(): Promise<SettlementSuggestion[]>
+  confirmSettlementPayment(
+    caseId: number,
+    amountCents: number,
+    receivedDate: string,
+    resolvedBy: 'JP' | 'Trestle' | null
+  ): Promise<void>
   exportPolicingRecord(markCode: string, toDrive: boolean): Promise<ExportResult>
   exportBrandFeed(): Promise<ExportResult>
 }

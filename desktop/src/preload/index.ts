@@ -46,6 +46,18 @@ const api: FafoApi = {
   quoteSettlement: (caseId, observedUseThrough) =>
     ipcRenderer.invoke('fafo:quoteSettlement', caseId, observedUseThrough),
   metricsSummary: () => ipcRenderer.invoke('fafo:metricsSummary'),
+  listLegacyPayments: () => ipcRenderer.invoke('fafo:listLegacyPayments'),
+  addLegacyPayment: (input) => ipcRenderer.invoke('fafo:addLegacyPayment', input),
+  removeLegacyPayment: (id) => ipcRenderer.invoke('fafo:removeLegacyPayment', id),
+  unrecordedSettlements: () => ipcRenderer.invoke('fafo:unrecordedSettlements'),
+  confirmSettlementPayment: (caseId, amountCents, receivedDate, resolvedBy) =>
+    ipcRenderer.invoke(
+      'fafo:confirmSettlementPayment',
+      caseId,
+      amountCents,
+      receivedDate,
+      resolvedBy
+    ),
   exportPolicingRecord: (markCode, toDrive) =>
     ipcRenderer.invoke('fafo:exportPolicingRecord', markCode, toDrive),
   exportBrandFeed: () => ipcRenderer.invoke('fafo:exportBrandFeed')

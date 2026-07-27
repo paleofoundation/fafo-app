@@ -34,10 +34,16 @@ import { scanMail } from './services/graphMail'
 import { quoteSettlement } from './services/settlement'
 import { msAccessToken } from './services/msgraph'
 import {
+  addLegacyPayment,
   brandFeed,
+  confirmSettlementPayment,
+  listLegacyPayments,
   metricsSummary,
   policingRecord,
-  policingRecordMarkdown
+  policingRecordMarkdown,
+  removeLegacyPayment,
+  unrecordedSettlements,
+  type LegacyEntryInput
 } from './services/metrics'
 import path from 'node:path'
 import {
@@ -213,6 +219,22 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle('fafo:metricsSummary', () => metricsSummary(db))
+  ipcMain.handle('fafo:listLegacyPayments', () => listLegacyPayments(db))
+  ipcMain.handle('fafo:addLegacyPayment', (_e, input: LegacyEntryInput) =>
+    addLegacyPayment(db, input)
+  )
+  ipcMain.handle('fafo:removeLegacyPayment', (_e, id: number) => removeLegacyPayment(db, id))
+  ipcMain.handle('fafo:unrecordedSettlements', () => unrecordedSettlements(db))
+  ipcMain.handle(
+    'fafo:confirmSettlementPayment',
+    (
+      _e,
+      caseId: number,
+      amountCents: number,
+      receivedDate: string,
+      resolvedBy: 'JP' | 'Trestle' | null
+    ) => confirmSettlementPayment(db, caseId, amountCents, receivedDate, resolvedBy)
+  )
   ipcMain.handle('fafo:exportPolicingRecord', async (_e, markCode: string, toDrive: boolean) => {
     const record = policingRecord(db, markCode)
     const md = policingRecordMarkdown(record)

@@ -2,7 +2,18 @@ import Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from '../../db/migrations'
 import { seedIfEmpty } from '../../db/seed'
-import { brandFeed, metricsSummary, policingRecord, policingRecordMarkdown } from '../metrics'
+import {
+  addLegacyPayment,
+  brandFeed,
+  confirmSettlementPayment,
+  listLegacyPayments,
+  metricsSummary,
+  parseSettlementAmountCents,
+  policingRecord,
+  policingRecordMarkdown,
+  removeLegacyPayment,
+  unrecordedSettlements
+} from '../metrics'
 import { createCase } from '../../db/queries'
 
 describe('metrics summary', () => {
@@ -125,6 +136,82 @@ describe('repeat-infringer flagging', () => {
       .prepare('SELECT repeat_infringer AS flag FROM licensees WHERE id = ?')
       .get(first.licenseeId) as { flag: number }
     expect(licensee.flag).toBe(0)
+  })
+})
+
+describe('legacy entries and unrecorded settlements', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    migrate(db)
+    seedIfEmpty(db)
+  })
+
+  it('legacy entries count toward totals and can be removed', () => {
+    const before = metricsSummary(db).grandTotalCents
+    const e = addLegacyPayment(db, {
+      label: 'Older matter',
+      type: 'Expired License',
+      amountCents: 500_000,
+      year: 2021,
+      resolvedBy: 'JP'
+    })
+    const after = metricsSummary(db)
+    expect(after.grandTotalCents).toBe(before + 500_000)
+    expect(after.years.find((y) => y.year === 2021)!.totalCents).toBe(500_000)
+    expect(after.resolvers.find((r) => r.who === 'JP')!.totalCents).toBe(500_000)
+    expect(listLegacyPayments(db)).toHaveLength(1)
+
+    removeLegacyPayment(db, e.id)
+    expect(listLegacyPayments(db)).toHaveLength(0)
+    expect(metricsSummary(db).grandTotalCents).toBe(before)
+  })
+
+  it('parses k-notation and dollar amounts', () => {
+    expect(parseSettlementAmountCents('Paid settlement, 17k')).toBe(1_700_000)
+    expect(parseSettlementAmountCents('7.5k license')).toBe(750_000)
+    expect(parseSettlementAmountCents('$10,000 + full cessation')).toBe(1_000_000)
+    expect(parseSettlementAmountCents('cessation only')).toBeNull()
+  })
+
+  it('classifies demands as positions so unpaid money is never booked as income', () => {
+    const rawc = db.prepare("SELECT id FROM cases WHERE title = 'Rawcology Inc.'").get() as {
+      id: number
+    }
+    const hc = db
+      .prepare("SELECT id FROM cases WHERE title = 'The Healthy Crunch Company'")
+      .get() as { id: number }
+    db.prepare("UPDATE cases SET settlement_position = 'Paid settlement, 17k' WHERE id = ?").run(
+      hc.id
+    )
+
+    const s = unrecordedSettlements(db)
+    const byCase = Object.fromEntries(s.map((x) => [x.caseId, x]))
+    // "$30,000 opening / $25,000 compromise" is a negotiating position
+    expect(byCase[rawc.id]!.reading).toBe('position')
+    expect(byCase[hc.id]!.reading).toBe('received')
+    expect(byCase[hc.id]!.suggestedCents).toBe(1_700_000)
+  })
+
+  it('confirming a suggestion books the payment and logs it, then drops it from the queue', () => {
+    const hc = db
+      .prepare("SELECT id FROM cases WHERE title = 'The Healthy Crunch Company'")
+      .get() as { id: number }
+    const before = metricsSummary(db).grandTotalCents
+    expect(unrecordedSettlements(db).some((s) => s.caseId === hc.id)).toBe(true)
+
+    confirmSettlementPayment(db, hc.id, 1_000_000, '2026-03-15', 'Trestle')
+
+    expect(metricsSummary(db).grandTotalCents).toBe(before + 1_000_000)
+    expect(metricsSummary(db).resolvers.find((r) => r.who === 'Trestle')!.totalCents).toBe(1_000_000)
+    // Once a payment exists the case leaves the review queue.
+    expect(unrecordedSettlements(db).some((s) => s.caseId === hc.id)).toBe(false)
+    const ev = db
+      .prepare("SELECT body FROM case_events WHERE case_id = ? AND kind = 'payment'")
+      .get(hc.id) as { body: string }
+    expect(ev.body).toContain('$10,000')
   })
 })
 
