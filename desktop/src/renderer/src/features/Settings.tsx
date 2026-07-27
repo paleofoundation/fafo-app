@@ -83,7 +83,7 @@ function SignnowCard(): React.JSX.Element {
       {syncResult && (
         <p style={{ marginTop: 10 }}>
           <span className="pill done">synced</span> as <strong>{syncResult.identityEmail}</strong> —{' '}
-          {syncResult.apiTotal} groups visible, {syncResult.licensesCreated} licenses created,{' '}
+          {syncResult.apiTotal} documents visible, {syncResult.licensesCreated} licenses created,{' '}
           {syncResult.licensesUpdated} updated, {syncResult.activeLicenses} active.
           {syncResult.apiTotal === 0 && (
             <span style={{ color: 'var(--warn)' }}>
