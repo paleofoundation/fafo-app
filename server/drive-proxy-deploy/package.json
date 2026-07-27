@@ -1,0 +1,16 @@
+{
+  "name": "fafo-drive-proxy",
+  "version": "1.0.0",
+  "description": "Google Drive proxy for FAFO App — Paleo Certified, Inc.",
+  "main": "fafo-drive-proxy.js",
+  "scripts": {
+    "start": "node fafo-drive-proxy.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "googleapis": "^140.0.0"
+  }
+}

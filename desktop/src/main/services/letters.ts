@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type Database from 'better-sqlite3'
 import { AMANDA_SYSTEM_PROMPT, buildAmandaUserPrompt } from '../../shared/domain/amandaPrompts'
 import { SUMMARY_SYSTEM_PROMPT, buildSummaryUserPrompt } from '../../shared/domain/summaryPrompt'
-import { nextResponseThursday } from '../../shared/domain/deadlines'
+import { nextResponseThursday, selloffEnd } from '../../shared/domain/deadlines'
 
 /**
  * Letter generation (M4). The prompts are the verbatim v1 AMANDA and
@@ -112,6 +112,87 @@ function caseInputs(db: Database.Database, caseId: number): {
   }
 }
 
+/**
+ * Verified license facts for the prompt. v1 had to infer terms from case
+ * notes and frequently emitted "Not confirmed from case data"; v2 holds them
+ * as extracted structured data, so they are supplied as ground truth. Marks
+ * carry their USPTO numbers and registration caveats so letters never
+ * overstate (Certified P Paleo is a service mark; Plant-Based is pending).
+ */
+export function licenseFactsBlock(db: Database.Database, caseId: number): string {
+  const lic = db
+    .prepare(
+      `SELECT li.term_start AS termStart, li.term_end AS termEnd, li.vintage,
+              li.annual_fee_cents AS feeCents, li.revenue_band AS band,
+              li.extraction_confidence AS confidence, li.agreement_ref AS ref,
+              l.name AS licenseeName, l.address
+       FROM cases c JOIN licenses li ON li.licensee_id = c.licensee_id
+       JOIN licensees l ON l.id = li.licensee_id
+       WHERE c.id = ? ORDER BY li.term_end IS NULL, li.term_end DESC LIMIT 1`
+    )
+    .get(caseId) as
+    | {
+        termStart: string | null
+        termEnd: string | null
+        vintage: string
+        feeCents: number | null
+        band: string | null
+        confidence: number | null
+        ref: string | null
+        licenseeName: string
+        address: string | null
+      }
+    | undefined
+
+  const marks = db
+    .prepare(
+      `SELECT DISTINCT m.name, m.uspto_reg_no AS regNo, m.reg_status AS regStatus, m.notes
+       FROM cases c JOIN licenses li ON li.licensee_id = c.licensee_id
+       JOIN license_marks lm ON lm.license_id = li.id
+       JOIN marks m ON m.id = lm.mark_id WHERE c.id = ?`
+    )
+    .all(caseId) as Array<{ name: string; regNo: string; regStatus: string; notes: string | null }>
+
+  const lines: string[] = []
+  if (marks.length > 0) {
+    lines.push('Marks licensed (verified from the mark register):')
+    for (const m of marks) {
+      lines.push(
+        `- ${m.name} — Reg. No. ${m.regNo} (${m.regStatus})${m.notes ? ` — CAVEAT: ${m.notes}` : ''}`
+      )
+    }
+  }
+  if (lic) {
+    if (lic.address) lines.push(`Licensee address of record: ${lic.address}`)
+    if (lic.ref) lines.push(`Agreement on file: ${lic.ref.replace('signnow:', '')}`)
+    if (lic.termStart || lic.termEnd) {
+      lines.push(`License term: ${lic.termStart ?? 'unknown'} through ${lic.termEnd ?? 'unknown'}`)
+    }
+    if (lic.feeCents !== null) {
+      lines.push(
+        `Annual license fee: $${(lic.feeCents / 100).toLocaleString()}${lic.band ? ` (Band ${lic.band} under the current schedule)` : ''}`
+      )
+    }
+    if (lic.termEnd) {
+      const so = selloffEnd(lic.termEnd, lic.vintage === '2020' ? '2020' : '2025')
+      lines.push(
+        lic.vintage === '2020'
+          ? `Agreement vintage: 2020 legacy — NO liquidated damages clause and NO sell-off period (immediate cessation required at ${lic.termEnd}). Anchor any settlement to the current pricing schedule, not a contractual formula.`
+          : `Agreement vintage: current template — §E.3.d.ii liquidated damages (one year's fee per month of continued misuse) and §E.3.c 180-day sell-off applying to physical inventory only, ending ${so}. Digital channels required immediate remediation at ${lic.termEnd}.`
+      )
+    }
+    if (lic.confidence !== null && lic.confidence < 0.7) {
+      lines.push(
+        `NOTE: these terms were machine-extracted at ${Math.round(lic.confidence * 100)}% confidence and are NOT yet human-verified — state them as subject to confirmation against the executed agreement.`
+      )
+    }
+  }
+  if (lines.length === 0) {
+    return '\n\nVERIFIED LICENSE FACTS: none on file — do not assert license terms, dates, or fees that are not in the case notes above.'
+  }
+  return `\n\nVERIFIED LICENSE FACTS (from the executed agreement and mark register — use these rather than inferring, and do not contradict them):\n${lines.join('\n')}`
+}
+
 export async function generateLetter(
   db: Database.Database,
   apiKey: string,
@@ -163,7 +244,7 @@ export async function generateLetter(
     model: 'claude-opus-5',
     max_tokens: request.maxTokens,
     system: request.system,
-    messages: [{ role: 'user', content: request.user }]
+    messages: [{ role: 'user', content: request.user + licenseFactsBlock(db, caseId) }]
   })
   if (response.stop_reason === 'refusal') throw new Error('Letter generation was declined')
   const text = response.content
@@ -235,13 +316,72 @@ export function markLetterSent(db: Database.Database, letterId: number): LetterR
   return getLetter(db, letterId)
 }
 
-/** Minimal text→HTML for the branded docs-mcp renderer. */
+// Brand palette, matching the proven Drive output (FORMAT TEST.html) and the
+// docs-mcp renderer: navy display headings, slate section headings.
+const NAVY = '#26366C'
+const SLATE = '#2B3540'
+
+/**
+ * Markdown → branded HTML for the docs-mcp renderer.
+ *
+ * SUMMARY v1.0 output is Markdown (`# 1. Parties`, `## 1a. …`), so heading
+ * lines must become real headings — wrapping every line in <p> would render
+ * literal "#" characters in the Google Doc. Verified against the v1 output in
+ * Drive: Cases/Zint Nutrition/FAFO Legal Referral Summary — MCB Star LLC.
+ */
 export function letterToHtml(title: string, bodyText: string): string {
   const esc = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const paragraphs = bodyText
-    .split(/\n{2,}/)
-    .map((p) => `<p>${esc(p.trim()).replace(/\n/g, '<br/>')}</p>`)
-    .join('\n')
-  return `<h1>${esc(title)}</h1>\n${paragraphs}`
+  const inline = (s: string): string =>
+    esc(s)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[\s(])\*(?!\s)(.+?)(?<!\s)\*/g, '$1<em>$2</em>')
+
+  const out: string[] = [
+    `<h1 style="font-family:Georgia,serif;color:${NAVY};border-bottom:2px solid ${NAVY}">${esc(title)}</h1>`
+  ]
+  let paragraph: string[] = []
+  const flush = (): void => {
+    if (paragraph.length === 0) return
+    out.push(`<p>${paragraph.map(inline).join('<br/>')}</p>`)
+    paragraph = []
+  }
+
+  for (const line of bodyText.split('\n')) {
+    const t = line.trim()
+    if (t === '') {
+      flush()
+      continue
+    }
+    if (t === '---' || t === '***') {
+      flush()
+      out.push('<hr>')
+      continue
+    }
+    const heading = t.match(/^(#{1,3})\s+(.*)$/)
+    if (heading) {
+      flush()
+      const level = heading[1]!.length
+      const body = inline(heading[2]!)
+      if (level === 1) {
+        out.push(
+          `<h1 style="font-family:Georgia,serif;color:${NAVY};border-bottom:2px solid ${NAVY}">${body}</h1>`
+        )
+      } else if (level === 2) {
+        out.push(`<h2 style="font-family:Georgia,serif;color:${SLATE}">${body}</h2>`)
+      } else {
+        out.push(`<h3 style="color:${SLATE}">${body}</h3>`)
+      }
+      continue
+    }
+    const bullet = t.match(/^[-*]\s+(.*)$/)
+    if (bullet) {
+      flush()
+      out.push(`<ul><li>${inline(bullet[1]!)}</li></ul>`)
+      continue
+    }
+    paragraph.push(t)
+  }
+  flush()
+  return out.join('\n')
 }

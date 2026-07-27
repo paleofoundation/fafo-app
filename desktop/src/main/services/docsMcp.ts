@@ -6,6 +6,14 @@
 
 const DOCS_MCP_URL = 'https://fafo-docs-mcp-134533637471.us-central1.run.app'
 
+/**
+ * The `Cases` folder inside Drive's `1 - FAFO App` — where v1 filed generated
+ * letters and per-case subfolders. Recovered from the deployed proxy's
+ * CASES_FOLDER_ID (server/drive-proxy-deploy/deploy.sh). Distinct from the
+ * folder root, 1cUdKdKlzcdi-5dYE_Esgx3nVPd824f89.
+ */
+export const CASES_FOLDER_ID = '1IiHLmNCNjk0e8LZTF_1LaSxDaIiuf-PZ'
+
 export interface BrandedDocResult {
   editUrl: string | null
   pdfUrl: string | null
@@ -20,7 +28,8 @@ export async function createBrandedDoc(
   const res = await fetch(`${DOCS_MCP_URL}/create-doc`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(folderId ? { title, html, folderId } : { title, html })
+    // Default to the Cases folder so exports land where v1 filed them.
+    body: JSON.stringify({ title, html, folderId: folderId ?? CASES_FOLDER_ID })
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
