@@ -325,6 +325,37 @@ export interface SettlementQuote {
   notes: string
 }
 
+export interface ResolverStat {
+  who: string
+  totalCents: number
+  payments: number
+  caseCount: number
+}
+
+export interface YearRow {
+  year: number
+  totalCents: number
+  count: number
+  byType: Record<string, number>
+  byResolver: Record<string, number>
+}
+
+export interface MetricsSummary {
+  years: YearRow[]
+  grandTotalCents: number
+  resolvers: ResolverStat[]
+  unassignedCents: number
+  unassignedCases: number
+  attributedCents: number
+  openCases: number
+  resolvedCases: number
+}
+
+export interface ExportResult {
+  path: string
+  driveUrl: string | null
+}
+
 export interface LicenseView {
   id: number
   licenseeName: string
@@ -382,4 +413,7 @@ export interface FafoApi {
   exportLetterToDrive(letterId: number): Promise<LetterView>
   scanMailNow(): Promise<MailScanResult>
   quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
+  metricsSummary(): Promise<MetricsSummary>
+  exportPolicingRecord(markCode: string, toDrive: boolean): Promise<ExportResult>
+  exportBrandFeed(): Promise<ExportResult>
 }

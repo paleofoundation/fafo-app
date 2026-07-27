@@ -34,6 +34,13 @@ import { scanMail } from './services/graphMail'
 import { quoteSettlement } from './services/settlement'
 import { msAccessToken } from './services/msgraph'
 import {
+  brandFeed,
+  metricsSummary,
+  policingRecord,
+  policingRecordMarkdown
+} from './services/metrics'
+import path from 'node:path'
+import {
   getSecret,
   hasSecret,
   setSecret,
@@ -204,6 +211,37 @@ export function registerIpc(): void {
   ipcMain.handle('fafo:quoteSettlement', (_e, caseId: number, observedUseThrough?: string) =>
     quoteSettlement(db, caseId, observedUseThrough)
   )
+
+  ipcMain.handle('fafo:metricsSummary', () => metricsSummary(db))
+  ipcMain.handle('fafo:exportPolicingRecord', async (_e, markCode: string, toDrive: boolean) => {
+    const record = policingRecord(db, markCode)
+    const md = policingRecordMarkdown(record)
+    const dir = path.join(app.getPath('userData'), 'exports')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, `FAFO_Policing_Record_${markCode}_${record.generatedAt}.md`)
+    fs.writeFileSync(file, md, 'utf8')
+    let driveUrl: string | null = null
+    if (toDrive) {
+      const html = md
+        .split('\n')
+        .map((line) => (line.startsWith('# ') ? `<h1>${line.slice(2)}</h1>` : `<p>${line}</p>`))
+        .join('\n')
+      const doc = await createBrandedDoc(
+        `FAFO Policing Record — ${record.markName} ${record.generatedAt}`,
+        html
+      )
+      driveUrl = doc.editUrl ?? doc.pdfUrl
+    }
+    return { path: file, driveUrl }
+  })
+  ipcMain.handle('fafo:exportBrandFeed', () => {
+    const feed = brandFeed(db)
+    const dir = path.join(app.getPath('userData'), 'exports')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, `fafo-brand-feed-${feed.generatedAt.slice(0, 10)}.json`)
+    fs.writeFileSync(file, JSON.stringify(feed, null, 2), 'utf8')
+    return { path: file, driveUrl: null }
+  })
 
   ipcMain.handle('fafo:extractionStatus', () => {
     const counts = extractionCounts(db)

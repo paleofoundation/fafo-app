@@ -44,7 +44,11 @@ const api: FafoApi = {
   exportLetterToDrive: (letterId) => ipcRenderer.invoke('fafo:exportLetterToDrive', letterId),
   scanMailNow: () => ipcRenderer.invoke('fafo:scanMailNow'),
   quoteSettlement: (caseId, observedUseThrough) =>
-    ipcRenderer.invoke('fafo:quoteSettlement', caseId, observedUseThrough)
+    ipcRenderer.invoke('fafo:quoteSettlement', caseId, observedUseThrough),
+  metricsSummary: () => ipcRenderer.invoke('fafo:metricsSummary'),
+  exportPolicingRecord: (markCode, toDrive) =>
+    ipcRenderer.invoke('fafo:exportPolicingRecord', markCode, toDrive),
+  exportBrandFeed: () => ipcRenderer.invoke('fafo:exportBrandFeed')
 }
 
 contextBridge.exposeInMainWorld('fafo', api)

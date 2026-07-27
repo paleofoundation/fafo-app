@@ -97,7 +97,36 @@ export function createCase(db: Database.Database, input: NewCaseInput): CaseRow 
       ).lastInsertRowid
   )
   addEvent(db, id, 'status_change', `Case opened (${input.status})`, input.openedAt)
+  if (licenseeId !== null) flagRepeatInfringer(db, licenseeId, id)
   return getCase(db, id)!.case
+}
+
+/**
+ * Repeat-infringer detection (improvement 7). A licensee with any prior case
+ * is flagged, and the new case's timeline records it — a second infringement
+ * is willful, which drives the settlement posture (master reference §10,
+ * Rawcology precedent).
+ */
+export function flagRepeatInfringer(
+  db: Database.Database,
+  licenseeId: number,
+  newCaseId: number
+): boolean {
+  const prior = db
+    .prepare(
+      `SELECT COUNT(*) AS n, MIN(opened_at) AS firstAt
+       FROM cases WHERE licensee_id = ? AND id != ?`
+    )
+    .get(licenseeId, newCaseId) as { n: number; firstAt: string | null }
+  if (prior.n === 0) return false
+
+  db.prepare('UPDATE licensees SET repeat_infringer = 1 WHERE id = ?').run(licenseeId)
+  const body = `REPEAT INFRINGER: ${prior.n} prior matter${prior.n === 1 ? '' : 's'} on record for this licensee (earliest ${prior.firstAt}). A second infringement supports willfulness — reflect this in the settlement posture.`
+  const exists = db
+    .prepare("SELECT 1 FROM case_events WHERE case_id = ? AND kind = 'note' AND body = ?")
+    .get(newCaseId, body)
+  if (!exists) addEvent(db, newCaseId, 'note', body)
+  return true
 }
 
 const CASE_PATCH_COLUMNS: Record<keyof CasePatch, string> = {
