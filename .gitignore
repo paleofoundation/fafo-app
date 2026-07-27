@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+.vite/
+
+# Server secrets — never commit refresh tokens or client secrets
+server/.env
+server/*refresh_token*
+*service-account*.json
+
+# Desktop app build output
+desktop/out/
+desktop/release/
+
+# Local SQLite data (lives in app-data dir, but belt & braces)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
