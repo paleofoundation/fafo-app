@@ -379,6 +379,50 @@ export interface SettlementSuggestion {
   year: number
 }
 
+export interface MetricsPlanRow {
+  key: string
+  rowType: 'case_payment' | 'legacy_entry'
+  infringer: string
+  amountCents: number
+  year: number | null
+  paymentDate: string | null
+  received: boolean
+  resolvedBy: 'JP' | 'Trestle' | null
+  matchedCaseTitle: string | null
+  action: 'import' | 'already-imported' | 'duplicate-of-existing' | 'no-year'
+  note: string | null
+}
+
+export interface MetricsImportPlanView {
+  file: string
+  schemaOk: boolean
+  sourceAppVersion: string | null
+  exportedAt: string | null
+  rows: MetricsPlanRow[]
+  totals: {
+    rows: number
+    toImport: number
+    alreadyImported: number
+    duplicateOfExisting: number
+    withoutYear: number
+    realizedIncomeCents: number
+  }
+  verification: {
+    fileRealizedIncomeCents: number | null
+    recomputedRealizedIncomeCents: number
+    matches: boolean
+    resolverIdentityHolds: boolean
+    messages: string[]
+  }
+}
+
+export interface MetricsImportResult {
+  imported: number
+  skipped: number
+  linkedToCases: number
+  legacyRows: number
+}
+
 export interface ExportResult {
   path: string
   driveUrl: string | null
@@ -441,6 +485,9 @@ export interface FafoApi {
   exportLetterToDrive(letterId: number): Promise<LetterView>
   scanMailNow(): Promise<MailScanResult>
   quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
+  /** Opens a file picker; returns null if cancelled. Read-only dry run. */
+  metricsImportPlan(): Promise<MetricsImportPlanView | null>
+  metricsImportCommit(): Promise<MetricsImportResult>
   metricsSummary(): Promise<MetricsSummary>
   listLegacyPayments(): Promise<LegacyEntry[]>
   addLegacyPayment(input: LegacyEntryInput): Promise<LegacyEntry>

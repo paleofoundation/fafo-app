@@ -1,0 +1,5 @@
+rowType,caseId,legacyId,infringer,contact,infringementType,caseStatus,resolvedBy,trademarkIds,settlementPosition,dateOpened,amount,paymentDate,year,received,source,url
+case_payment,201,,Allive Europe UAB,,Unlicensed Use - Never Certified,Resolved,,1,"$4,000",2023-01-01,4000,2023-06-01,2023,true,Website,
+case_payment,202,,Laitram / Prime Shrimp LLC,,Unlicensed Use - Never Certified,Resolved,,1,"$6,000",2023-01-01,6000,2023-08-01,2023,true,Website,
+case_payment,203,,Yoleez LLC,,Expired License,Resolved,,1,"$3,000 + $5,250 sell-off extension",2023-01-01,3000,2023-09-01,2023,true,Website,
+case_payment,203,,Yoleez LLC,,Expired License,Resolved,,1,"$3,000 + $5,250 sell-off extension",2023-01-01,5250,2023-10-01,2023,true,Website,

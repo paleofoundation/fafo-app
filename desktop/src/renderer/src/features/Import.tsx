@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type {
   LocalCommitResult,
   LocalScanSummary,
+  MetricsImportPlanView,
+  MetricsImportResult,
   SheetsCommitResult,
   SheetsScanView,
   SnapshotImportResult,
@@ -12,6 +14,163 @@ import type {
  * M2 ingest surface. Nothing writes to the database without an explicit
  * click here — the dry run is the review gate.
  */
+const money = (cents: number): string => `$${Math.round(cents / 100).toLocaleString()}`
+
+const ACTION_PILL: Record<string, string> = {
+  import: 'done',
+  'already-imported': 'later',
+  'duplicate-of-existing': 'later',
+  'no-year': 'soon'
+}
+
+function MetricsImportCard({
+  onChanged
+}: {
+  onChanged: () => Promise<void>
+}): React.JSX.Element {
+  const [plan, setPlan] = useState<MetricsImportPlanView | null>(null)
+  const [result, setResult] = useState<MetricsImportResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function choose(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setResult(null)
+    try {
+      const p = await window.fafo.metricsImportPlan()
+      setPlan(p)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  async function commit(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      setResult(await window.fafo.metricsImportCommit())
+      setPlan(null)
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="card">
+      <h2>v1 metrics export — settlement income history</h2>
+      <p className="subtitle">
+        Imports a <code>fafo.metrics.v2</code> export from the v1 app (Metrics tab → Export for
+        v2), JSON or CSV. One row per money event. Only received rows count as income; unreceived
+        ones are kept as pending. Payments already here — including the seeded precedents — are
+        detected and skipped, so re-importing is safe.
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="outline" disabled={busy} onClick={() => void choose()}>
+          {busy && !plan ? 'Reading…' : 'Choose export file…'}
+        </button>
+        {plan && plan.schemaOk && plan.totals.toImport > 0 && (
+          <button
+            className="outline"
+            style={{ borderColor: 'var(--ok)', color: 'var(--ok)' }}
+            disabled={busy}
+            onClick={() => void commit()}
+          >
+            Import {plan.totals.toImport} row{plan.totals.toImport === 1 ? '' : 's'}
+          </button>
+        )}
+      </div>
+
+      {error && <p style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</p>}
+
+      {result && (
+        <p style={{ marginTop: 10 }}>
+          <span className="pill done">imported</span> {result.imported} money events (
+          {result.linkedToCases} linked to cases, {result.legacyRows} as legacy), {result.skipped}{' '}
+          skipped.
+        </p>
+      )}
+
+      {plan && (
+        <div style={{ marginTop: 12 }}>
+          <p className="deadline-meta">
+            {plan.file}
+            {plan.sourceAppVersion && ` · from ${plan.sourceAppVersion}`}
+          </p>
+          {!plan.schemaOk && (
+            <p style={{ color: 'var(--danger)' }}>
+              {plan.verification.messages.join(' ')} Nothing will be imported.
+            </p>
+          )}
+          <p>
+            <strong>{plan.totals.rows}</strong> rows · {plan.totals.toImport} to import ·{' '}
+            {plan.totals.alreadyImported} already imported · {plan.totals.duplicateOfExisting}{' '}
+            duplicates of existing payments
+            {plan.totals.withoutYear > 0 && ` · ${plan.totals.withoutYear} with no year`}
+            {plan.totals.toImport > 0 && (
+              <>
+                {' '}
+                · adds <strong>{money(plan.totals.realizedIncomeCents)}</strong> realized income
+              </>
+            )}
+          </p>
+          <p
+            className="deadline-meta"
+            style={{ color: plan.verification.matches ? 'var(--ok)' : 'var(--warn)' }}
+          >
+            {plan.verification.matches
+              ? `Verified: rows total ${money(plan.verification.recomputedRealizedIncomeCents)}, matching the file's summary${plan.verification.resolverIdentityHolds ? ' and the JP/Trestle/Unassigned split reconciles' : ''}.`
+              : plan.verification.messages.join(' ')}
+          </p>
+          <table style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>Party</th>
+                <th>Kind</th>
+                <th>Amount</th>
+                <th>Date</th>
+                <th>Credit</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.rows.map((r) => (
+                <tr
+                  key={r.key}
+                  style={r.action === 'import' ? undefined : { opacity: 0.55 }}
+                >
+                  <td>
+                    <strong>{r.infringer}</strong>
+                    {r.matchedCaseTitle && (
+                      <div className="deadline-meta">→ {r.matchedCaseTitle}</div>
+                    )}
+                  </td>
+                  <td style={{ fontSize: 12 }}>
+                    {r.rowType === 'legacy_entry' ? 'legacy' : 'case payment'}
+                    {!r.received && <span className="pill soon" style={{ marginLeft: 4 }}>pending</span>}
+                  </td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{money(r.amountCents)}</td>
+                  <td style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}>
+                    {r.paymentDate ?? (r.year ? String(r.year) : '—')}
+                  </td>
+                  <td style={{ fontSize: 12.5 }}>{r.resolvedBy ?? '—'}</td>
+                  <td>
+                    <span className={`pill ${ACTION_PILL[r.action] ?? 'later'}`}>{r.action}</span>
+                    {r.note && <div className="deadline-meta">{r.note}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Import({ onChanged }: { onChanged: () => Promise<void> }): React.JSX.Element {
   const [snapStatus, setSnapStatus] = useState<SnapshotStatus | null>(null)
   const [snapResult, setSnapResult] = useState<SnapshotImportResult | null>(null)
@@ -102,6 +261,8 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
           {error}
         </div>
       )}
+
+      <MetricsImportCard onChanged={onChanged} />
 
       <div className="card">
         <h2>SignNow ledger — licensees &amp; licenses</h2>

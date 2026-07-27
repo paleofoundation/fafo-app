@@ -1,4 +1,4 @@
-import { BrowserWindow, app, ipcMain } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain } from 'electron'
 import fs from 'node:fs'
 import { openDb } from './db'
 import * as q from './db/queries'
@@ -20,6 +20,13 @@ import {
   type SheetsExport,
   type SheetsScanResult
 } from './services/ingest/sheetsImport'
+import {
+  commitMetricsImport,
+  parseCsvExport,
+  planMetricsImport,
+  type MetricsExport,
+  type MetricsImportPlan
+} from './services/ingest/metricsImport'
 import { syncSignnow } from './services/signnowApi'
 import { extractionCounts, runExtraction } from './services/ingest/extractionRunner'
 import {
@@ -217,6 +224,31 @@ export function registerIpc(): void {
   ipcMain.handle('fafo:quoteSettlement', (_e, caseId: number, observedUseThrough?: string) =>
     quoteSettlement(db, caseId, observedUseThrough)
   )
+
+  let lastMetricsImport: { exp: MetricsExport; plan: MetricsImportPlan } | null = null
+  ipcMain.handle('fafo:metricsImportPlan', async () => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Choose the v1 metrics export',
+      message: 'Metrics tab → Export for v2 (JSON recommended)',
+      properties: ['openFile'],
+      filters: [{ name: 'Metrics export', extensions: ['json', 'csv'] }]
+    })
+    if (picked.canceled || !picked.filePaths[0]) return null
+    const file = picked.filePaths[0]
+    const text = fs.readFileSync(file, 'utf8')
+    const exp: MetricsExport = file.toLowerCase().endsWith('.csv')
+      ? parseCsvExport(text)
+      : (JSON.parse(text) as MetricsExport)
+    const plan = planMetricsImport(db, exp)
+    lastMetricsImport = { exp, plan }
+    return { file, ...plan }
+  })
+  ipcMain.handle('fafo:metricsImportCommit', () => {
+    if (!lastMetricsImport) throw new Error('Choose an export and review it first')
+    const r = commitMetricsImport(db, lastMetricsImport.exp, lastMetricsImport.plan)
+    lastMetricsImport = null
+    return r
+  })
 
   ipcMain.handle('fafo:metricsSummary', () => metricsSummary(db))
   ipcMain.handle('fafo:listLegacyPayments', () => listLegacyPayments(db))

@@ -1,0 +1,140 @@
+{
+  "schema": "fafo.metrics.v2",
+  "exportedAt": "2026-07-27T14:08:39.155Z",
+  "sourceAppVersion": "v1.0.4-r67 (SEED EXAMPLE)",
+  "notes": "EXAMPLE built from the app seed data — no legacy entries, no resolvedBy set. The real in-app export will include legacy_entry rows and any JP/Trestle credit you have assigned. One row per money event. Only received=true counts as realized income.",
+  "resolverValues": [
+    "JP",
+    "Trestle",
+    null
+  ],
+  "infringementTypes": [
+    "Expired License",
+    "Unlicensed Use - Change in Ownership",
+    "Unlicensed Use - Never Certified"
+  ],
+  "trademarks": [
+    {
+      "id": 1,
+      "name": "THIS PRODUCT IS KETO CERTIFIED KETOCERTIFIED.COM",
+      "description": "KETO Certified — Reg. No. 6171595, Class A"
+    },
+    {
+      "id": 2,
+      "name": "CERTIFIED P PALEO",
+      "description": "Certified Paleo — Reg. No. 4767643, Class 042"
+    },
+    {
+      "id": 3,
+      "name": "THIS PRODUCT IS CERTIFIED PALEO FRIENDLY",
+      "description": "Certified Paleo Friendly — Reg. No. 4583649, Class 042"
+    },
+    {
+      "id": 4,
+      "name": "LAB-TESTED GRAIN FREE CERTIFIED",
+      "description": "Grain Free Certified — Reg. No. 6676253, Class A"
+    },
+    {
+      "id": 5,
+      "name": "LAB-TESTED NOGRAIN.ORG GRAIN FREE GLUTEN FREE",
+      "description": "Grain Free Certified — Reg. No. 6337794, Class A"
+    },
+    {
+      "id": 6,
+      "name": "CERTIFIED PF PALEO FRIENDLY",
+      "description": "Certified Paleo Friendly — Reg. No. 6214420, Class A"
+    }
+  ],
+  "summary": {
+    "totalRows": 4,
+    "receivedRows": 4,
+    "realizedIncome": 18250,
+    "byResolver": {
+      "JP": 0,
+      "Trestle": 0,
+      "Unassigned": 18250
+    }
+  },
+  "rows": [
+    {
+      "rowType": "case_payment",
+      "caseId": 201,
+      "infringer": "Allive Europe UAB",
+      "contact": "",
+      "infringementType": "Unlicensed Use - Never Certified",
+      "caseStatus": "Resolved",
+      "resolvedBy": null,
+      "trademarkIds": [
+        1
+      ],
+      "settlementPosition": "$4,000",
+      "dateOpened": "2023-01-01",
+      "amount": 4000,
+      "paymentDate": "2023-06-01",
+      "year": 2023,
+      "received": true,
+      "source": "Website",
+      "url": ""
+    },
+    {
+      "rowType": "case_payment",
+      "caseId": 202,
+      "infringer": "Laitram / Prime Shrimp LLC",
+      "contact": "",
+      "infringementType": "Unlicensed Use - Never Certified",
+      "caseStatus": "Resolved",
+      "resolvedBy": null,
+      "trademarkIds": [
+        1
+      ],
+      "settlementPosition": "$6,000",
+      "dateOpened": "2023-01-01",
+      "amount": 6000,
+      "paymentDate": "2023-08-01",
+      "year": 2023,
+      "received": true,
+      "source": "Website",
+      "url": ""
+    },
+    {
+      "rowType": "case_payment",
+      "caseId": 203,
+      "infringer": "Yoleez LLC",
+      "contact": "",
+      "infringementType": "Expired License",
+      "caseStatus": "Resolved",
+      "resolvedBy": null,
+      "trademarkIds": [
+        1
+      ],
+      "settlementPosition": "$3,000 + $5,250 sell-off extension",
+      "dateOpened": "2023-01-01",
+      "amount": 3000,
+      "paymentDate": "2023-09-01",
+      "year": 2023,
+      "received": true,
+      "source": "Website",
+      "url": ""
+    },
+    {
+      "rowType": "case_payment",
+      "caseId": 203,
+      "infringer": "Yoleez LLC",
+      "contact": "",
+      "infringementType": "Expired License",
+      "caseStatus": "Resolved",
+      "resolvedBy": null,
+      "trademarkIds": [
+        1
+      ],
+      "settlementPosition": "$3,000 + $5,250 sell-off extension",
+      "dateOpened": "2023-01-01",
+      "amount": 5250,
+      "paymentDate": "2023-10-01",
+      "year": 2023,
+      "received": true,
+      "source": "Website",
+      "url": ""
+    }
+  ]
+}

@@ -227,6 +227,13 @@ const MIGRATIONS: string[] = [
   `
   CREATE UNIQUE INDEX idx_evidence_path ON evidence_files(path) WHERE path IS NOT NULL;
   CREATE UNIQUE INDEX idx_cases_local_folder ON cases(local_folder_path) WHERE local_folder_path IS NOT NULL;
+  `,
+
+  // 004 — money-event provenance for the v1 metrics import (fafo.metrics.v2).
+  // One row per money event, keyed so re-importing the same export is a no-op.
+  `
+  ALTER TABLE payments ADD COLUMN import_key TEXT;
+  CREATE UNIQUE INDEX idx_payments_import_key ON payments(import_key) WHERE import_key IS NOT NULL;
   `
 ]
 
