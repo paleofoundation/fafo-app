@@ -21,14 +21,25 @@ export interface SignnowIdentity {
   lastName: string
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
 async function api(key: string, pathname: string): Promise<unknown> {
-  const res = await fetch(`${BASE}${pathname}`, {
-    headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }
-  })
-  if (!res.ok) {
-    throw new Error(`SignNow API ${res.status} on ${pathname}${res.status === 401 ? ' — key invalid or revoked' : ''}`)
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(`${BASE}${pathname}`, {
+      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }
+    })
+    if (res.status === 429 && attempt <= 4) {
+      const retryAfter = parseInt(res.headers.get('retry-after') ?? '', 10)
+      await sleep((Number.isFinite(retryAfter) ? retryAfter : 15 * attempt) * 1000)
+      continue
+    }
+    if (!res.ok) {
+      throw new Error(
+        `SignNow API ${res.status} on ${pathname}${res.status === 401 ? ' — key invalid or revoked' : ''}`
+      )
+    }
+    return res.json()
   }
-  return res.json()
 }
 
 export async function getIdentity(key: string): Promise<SignnowIdentity> {
@@ -45,56 +56,69 @@ export async function getIdentity(key: string): Promise<SignnowIdentity> {
   }
 }
 
-interface RawGroupPage {
-  document_groups?: Array<{
-    id?: string
-    group_id?: string
-    group_name?: string
-    name?: string
-    last_updated?: number | string
-    invite_id?: string | null
-    invite_status?: string | null
-    state?: string
-    documents?: unknown[]
-  }>
-  document_group_total_count?: number
+/**
+ * Raw shape of GET /user/documentsv2 (verified live 2026-07-27): a bare
+ * ARRAY of documents; pagination is `per_page` + `page` (1-based) — `limit`
+ * and `offset` are silently ignored. The agreements live here as individual
+ * documents (the account has 0 multi-document "document groups"); the
+ * claude.ai connector's "305 groups" were these same documents unified.
+ */
+export interface RawDocument {
+  id?: string
+  document_name?: string
+  updated?: string | number
+  template?: boolean
+  entity_type?: string
+  field_invites?: Array<{ status?: string; email?: string }>
 }
 
-function mapGroup(raw: NonNullable<RawGroupPage['document_groups']>[number]): SnapshotGroup | null {
-  const id = raw.id ?? raw.group_id
-  const name = raw.group_name ?? raw.name
-  if (!id || !name) return null
-  const inviteStatus = raw.invite_status ?? raw.state ?? null
+export function mapRawDocument(raw: RawDocument): SnapshotGroup | null {
+  if (!raw.id || !raw.document_name) return null
+  if (raw.template === true) return null // template library, not an executed agreement
+  if (raw.entity_type && raw.entity_type !== 'document') return null
+
+  const invites = raw.field_invites ?? []
+  const statuses = invites.map((i) => i.status ?? '')
+  const inviteStatus =
+    invites.length === 0
+      ? null
+      : statuses.every((s) => s === 'fulfilled')
+        ? 'completed'
+        : statuses.some((s) => s === 'pending' || s === 'created')
+          ? 'pending'
+          : statuses.some((s) => s === 'expired')
+            ? 'expired'
+            : (statuses[0] ?? null)
+
   return {
-    id,
-    name,
+    id: raw.id,
+    name: raw.document_name,
     invite_status: inviteStatus,
-    // The groups listing doesn't carry participant emails; the connector
-    // snapshot already filled contacts, and PDF extraction refines later.
-    participant_emails: [],
-    signed: inviteStatus === 'completed' || inviteStatus === 'fulfilled',
-    last_updated:
-      typeof raw.last_updated === 'string' ? parseInt(raw.last_updated, 10) : (raw.last_updated ?? null)
+    participant_emails: [...new Set(invites.map((i) => i.email).filter((e): e is string => Boolean(e)))],
+    signed: invites.length > 0 && statuses.every((s) => s === 'fulfilled'),
+    last_updated: typeof raw.updated === 'string' ? parseInt(raw.updated, 10) : (raw.updated ?? null)
   }
 }
 
-export async function fetchAllGroups(key: string): Promise<{ groups: SnapshotGroup[]; total: number }> {
-  const groups: SnapshotGroup[] = []
-  const limit = 50
-  let offset = 0
-  let total = 0
-  for (;;) {
-    const page = (await api(key, `/user/documentgroups?limit=${limit}&offset=${offset}`)) as RawGroupPage
-    total = page.document_group_total_count ?? total
-    const items = page.document_groups ?? []
+export async function fetchAllDocuments(key: string): Promise<SnapshotGroup[]> {
+  const out: SnapshotGroup[] = []
+  const perPage = 100
+  let effectivePageSize: number | null = null
+  for (let page = 1; ; page++) {
+    const items = (await api(key, `/user/documentsv2?per_page=${perPage}&page=${page}`)) as RawDocument[]
+    if (!Array.isArray(items) || items.length === 0) break
+    // The server may cap per_page below what we asked — learn the real page
+    // size from the first page so the stop condition can't fire early.
+    effectivePageSize ??= items.length
     for (const raw of items) {
-      const mapped = mapGroup(raw)
-      if (mapped) groups.push(mapped)
+      const mapped = mapRawDocument(raw)
+      if (mapped) out.push(mapped)
     }
-    offset += limit
-    if (items.length === 0 || groups.length >= total) break
+    if (items.length < effectivePageSize) break
+    if (page > 60) throw new Error('SignNow pagination runaway — aborting after 60 pages')
+    await sleep(400) // stay under the rate limit
   }
-  return { groups, total }
+  return out
 }
 
 export interface SignnowSyncOutcome {
@@ -106,13 +130,14 @@ export interface SignnowSyncOutcome {
 
 export async function syncSignnow(db: Database.Database, key: string): Promise<SignnowSyncOutcome> {
   const identity = await getIdentity(key)
-  const { groups, total } = await fetchAllGroups(key)
+  const documents = await fetchAllDocuments(key)
   const snapshot: SignnowSnapshot = {
     exportedAt: new Date().toISOString(),
     source: 'signnow-api',
-    total,
-    groups
+    total: documents.length,
+    groups: documents
   }
+  const total = documents.length
   const imported = importSignnowSnapshot(db, snapshot)
   const syncedAt = new Date().toISOString()
   db.prepare(

@@ -189,6 +189,30 @@ describe('signnow snapshot importer', () => {
     expect(rawcology.n).toBe(1)
   })
 
+  it('collapses duplicate copies of the same agreement — signed copy wins', () => {
+    const withDupes: SignnowSnapshot = {
+      exportedAt: '2026-07-27T14:00:00Z',
+      source: 'test',
+      total: 3,
+      groups: [
+        { id: 'd1', name: 'NATURAL SINS LLC License Agreement 2026', invite_status: null, participant_emails: [], signed: false, last_updated: 1780000000 },
+        { id: 'd2', name: 'NATURAL SINS LLC License Agreement 2026', invite_status: 'completed', participant_emails: ['arodriguez@naturalsinsonline.com'], signed: true, last_updated: 1780931507 },
+        { id: 'd3', name: 'NATURAL SINS LLC License Agreement 2026', invite_status: null, participant_emails: [], signed: false, last_updated: 1781000000 }
+      ]
+    }
+    const r = importSignnowSnapshot(db, withDupes)
+    expect(r.groupsSeen).toBe(3)
+    expect(r.duplicatesSkipped).toBe(2)
+    expect(r.licensesCreated).toBe(1)
+    const row = db
+      .prepare(
+        `SELECT li.signnow_group_id AS id FROM licenses li
+         JOIN licensees l ON l.id = li.licensee_id WHERE l.name = 'NATURAL SINS LLC'`
+      )
+      .get() as { id: string }
+    expect(row.id).toBe('d2') // the signed copy, despite d3 being newer
+  })
+
   it('re-import updates rather than duplicates', () => {
     importSignnowSnapshot(db, snapshot)
     const second = importSignnowSnapshot(db, snapshot)

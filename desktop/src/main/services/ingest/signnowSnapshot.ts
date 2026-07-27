@@ -53,6 +53,8 @@ export interface SnapshotImportResult {
   licensesUpdated: number
   unparsedNames: string[]
   activeLicenses: number
+  /** duplicate copies of the same agreement (same company + year) collapsed */
+  duplicatesSkipped: number
 }
 
 export function importSignnowSnapshot(
@@ -65,7 +67,8 @@ export function importSignnowSnapshot(
     licensesCreated: 0,
     licensesUpdated: 0,
     unparsedNames: [],
-    activeLicenses: 0
+    activeLicenses: 0,
+    duplicatesSkipped: 0
   }
 
   const findLicensee = db.prepare('SELECT id FROM licensees WHERE normalized_name = ?')
@@ -82,18 +85,36 @@ export function importSignnowSnapshot(
   )
   const updateLicenseStatus = db.prepare('UPDATE licenses SET status = ? WHERE id = ?')
 
-  // Latest agreement year per licensee decides which license is the live one.
-  const latestYearByLicensee = new Map<string, number>()
-  const parsedGroups: Array<{ g: SnapshotGroup; company: string; year: number | null }> = []
+  // SignNow holds multiple copies of the same executed agreement (draft +
+  // sent + signed). Collapse to one winner per (company, year): signed beats
+  // unsigned, then most recently updated.
+  const byAgreement = new Map<string, { g: SnapshotGroup; company: string; year: number | null }>()
   for (const g of snapshot.groups) {
     const parsed = parseSignnowGroupName(g.name)
     if (!parsed) {
       result.unparsedNames.push(g.name)
       continue
     }
-    parsedGroups.push({ g, company: parsed.company, year: parsed.year })
-    const norm = normalizeCompanyName(parsed.company)
-    const y = parsed.year ?? 0
+    result.groupsSeen += 1
+    const key = `${normalizeCompanyName(parsed.company)}|${parsed.year ?? '?'}`
+    const incumbent = byAgreement.get(key)
+    if (!incumbent) {
+      byAgreement.set(key, { g, company: parsed.company, year: parsed.year })
+      continue
+    }
+    result.duplicatesSkipped += 1
+    const challengerWins =
+      (g.signed && !incumbent.g.signed) ||
+      (g.signed === incumbent.g.signed && (g.last_updated ?? 0) > (incumbent.g.last_updated ?? 0))
+    if (challengerWins) byAgreement.set(key, { g, company: parsed.company, year: parsed.year })
+  }
+
+  // Latest agreement year per licensee decides which license is the live one.
+  const latestYearByLicensee = new Map<string, number>()
+  const parsedGroups = [...byAgreement.values()]
+  for (const { company, year } of parsedGroups) {
+    const norm = normalizeCompanyName(company)
+    const y = year ?? 0
     if (y > (latestYearByLicensee.get(norm) ?? -1)) latestYearByLicensee.set(norm, y)
   }
 
@@ -101,7 +122,6 @@ export function importSignnowSnapshot(
 
   const tx = db.transaction(() => {
     for (const { g, company, year } of parsedGroups) {
-      result.groupsSeen += 1
       const norm = normalizeCompanyName(company)
 
       let licenseeId: number

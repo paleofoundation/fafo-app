@@ -219,6 +219,7 @@ export interface SnapshotImportResult {
   licensesUpdated: number
   unparsedNames: string[]
   activeLicenses: number
+  duplicatesSkipped: number
 }
 
 export interface SnapshotStatus {
