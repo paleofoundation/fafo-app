@@ -3,6 +3,8 @@ import path from 'node:path'
 import { registerIpc } from './ipc'
 import { openDb } from './db'
 import { overdueDeadlines } from './db/queries'
+import { migrateBootstrapSecrets } from './secrets'
+import { startScheduler } from './services/scheduler'
 
 // Pin the data directory to a stable name so the SQLite file survives
 // app renames and never lands in the shared "Electron" dev folder.
@@ -25,6 +27,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     registerIpc()
+    migrateBootstrapSecrets()
 
     // FAFO_SMOKE=1: verify the app boots — DB opens, migrations/seed run,
     // IPC registers — then report and quit without showing a window.
@@ -37,6 +40,7 @@ if (!gotLock) {
       return
     }
 
+    startScheduler(openDb())
     createWindow()
     notifyOverdue()
 

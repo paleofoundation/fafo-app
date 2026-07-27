@@ -20,12 +20,15 @@ import {
   type SheetsExport,
   type SheetsScanResult
 } from './services/ingest/sheetsImport'
+import { syncSignnow } from './services/signnowApi'
+import { getSecret, hasSecret, setSecret, SECRET_SIGNNOW_API_KEY } from './secrets'
 import type {
   CasePatch,
   EventKind,
   LocalScanSummary,
   NewCaseInput,
   NewDeadlineInput,
+  SignnowStatus,
   SnapshotStatus
 } from '../shared/types'
 
@@ -129,5 +132,38 @@ export function registerIpc(): void {
     const result = commitSheets(db, lastSheetsScan)
     lastSheetsScan = null
     return result
+  })
+
+  function signnowStatus(): SignnowStatus {
+    const sync = db
+      .prepare("SELECT cursor, last_full_sync_at AS at FROM sync_state WHERE source = 'signnow'")
+      .get() as { cursor: string | null; at: string | null } | undefined
+    const job = db
+      .prepare("SELECT last_status FROM jobs WHERE kind = 'signnow_sync'")
+      .get() as { last_status: string | null } | undefined
+    return {
+      keyPresent: hasSecret(SECRET_SIGNNOW_API_KEY),
+      lastSyncAt: sync?.at ?? null,
+      lastSyncCursor: sync?.cursor ?? null,
+      lastJobStatus: job?.last_status ?? null
+    }
+  }
+
+  ipcMain.handle('fafo:signnowStatus', () => signnowStatus())
+  ipcMain.handle('fafo:signnowSetKey', (_e, key: string) => {
+    setSecret(SECRET_SIGNNOW_API_KEY, key.trim())
+    return signnowStatus()
+  })
+  ipcMain.handle('fafo:signnowSyncNow', async () => {
+    const key = getSecret(SECRET_SIGNNOW_API_KEY)
+    if (!key) throw new Error('No SignNow API key stored — add one below first')
+    const r = await syncSignnow(db, key)
+    return {
+      identityEmail: r.identity.email,
+      apiTotal: r.apiTotal,
+      licensesCreated: r.imported.licensesCreated,
+      licensesUpdated: r.imported.licensesUpdated,
+      activeLicenses: r.imported.activeLicenses
+    }
   })
 }

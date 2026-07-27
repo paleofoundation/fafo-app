@@ -254,6 +254,21 @@ export interface SheetsCommitResult {
   skipped: number
 }
 
+export interface SignnowStatus {
+  keyPresent: boolean
+  lastSyncAt: string | null
+  lastSyncCursor: string | null
+  lastJobStatus: string | null
+}
+
+export interface SignnowSyncNowResult {
+  identityEmail: string
+  apiTotal: number
+  licensesCreated: number
+  licensesUpdated: number
+  activeLicenses: number
+}
+
 /** The typed surface exposed to the renderer via contextBridge as window.fafo. */
 export interface FafoApi {
   listCases(): Promise<CaseRow[]>
@@ -282,4 +297,8 @@ export interface FafoApi {
   importScanSheets(): Promise<SheetsScanView>
   /** Commits the most recent sheets scan. */
   importCommitSheets(): Promise<SheetsCommitResult>
+  signnowStatus(): Promise<SignnowStatus>
+  /** Store/replace the SignNow API key (empty string clears it). */
+  signnowSetKey(key: string): Promise<SignnowStatus>
+  signnowSyncNow(): Promise<SignnowSyncNowResult>
 }

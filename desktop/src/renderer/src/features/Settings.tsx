@@ -1,10 +1,102 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { MsAuthStatus, MsDeviceCode } from '../../../shared/types'
+import type {
+  MsAuthStatus,
+  MsDeviceCode,
+  SignnowStatus,
+  SignnowSyncNowResult
+} from '../../../shared/types'
 
 type AuthUiState =
   | { phase: 'idle' }
   | { phase: 'code'; code: MsDeviceCode }
   | { phase: 'error'; message: string }
+
+function SignnowCard(): React.JSX.Element {
+  const [status, setStatus] = useState<SignnowStatus | null>(null)
+  const [keyDraft, setKeyDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [syncResult, setSyncResult] = useState<SignnowSyncNowResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.fafo.signnowStatus().then(setStatus)
+  }, [])
+
+  async function saveKey(): Promise<void> {
+    if (!keyDraft.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      setStatus(await window.fafo.signnowSetKey(keyDraft.trim()))
+      setKeyDraft('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  async function syncNow(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setSyncResult(null)
+    try {
+      setSyncResult(await window.fafo.signnowSyncNow())
+      setStatus(await window.fafo.signnowStatus())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="card">
+      <h2>SignNow — nightly license sync</h2>
+      {status && (
+        <p className="subtitle">
+          {status.keyPresent ? (
+            <>
+              <span className="pill done">key stored</span> (encrypted, key in macOS Keychain).{' '}
+              {status.lastSyncAt
+                ? `Last sync ${status.lastSyncAt.slice(0, 16).replace('T', ' ')} — ${status.lastSyncCursor}.`
+                : 'Not synced yet.'}
+              {status.lastJobStatus && ` Nightly job: ${status.lastJobStatus}`}
+            </>
+          ) : (
+            'No API key stored. The nightly sync skips until one is added.'
+          )}
+        </p>
+      )}
+      <div className="add-row">
+        <input
+          type="password"
+          placeholder={status?.keyPresent ? 'Replace API key…' : 'Paste SignNow API key…'}
+          value={keyDraft}
+          onChange={(e) => setKeyDraft(e.target.value)}
+        />
+        <button className="outline" disabled={busy || !keyDraft.trim()} onClick={() => void saveKey()}>
+          Save key
+        </button>
+        <button className="outline" disabled={busy || !status?.keyPresent} onClick={() => void syncNow()}>
+          {busy ? 'Working…' : 'Sync now'}
+        </button>
+      </div>
+      {syncResult && (
+        <p style={{ marginTop: 10 }}>
+          <span className="pill done">synced</span> as <strong>{syncResult.identityEmail}</strong> —{' '}
+          {syncResult.apiTotal} groups visible, {syncResult.licensesCreated} licenses created,{' '}
+          {syncResult.licensesUpdated} updated, {syncResult.activeLicenses} active.
+          {syncResult.apiTotal === 0 && (
+            <span style={{ color: 'var(--warn)' }}>
+              {' '}
+              This account sees no agreements — the key likely belongs to the wrong SignNow user.
+            </span>
+          )}
+        </p>
+      )}
+      {error && <p style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</p>}
+    </div>
+  )
+}
 
 export function Settings(): React.JSX.Element {
   const [status, setStatus] = useState<MsAuthStatus | null>(null)
@@ -128,12 +220,13 @@ export function Settings(): React.JSX.Element {
         </div>
       )}
 
+      <SignnowCard />
+
       <div className="card">
         <h2>Coming in later milestones</h2>
         <p className="subtitle" style={{ marginBottom: 0 }}>
-          SignNow API credentials (M2 sync) · Anthropic API key (letters, extraction, vision) ·
-          Google Drive/Sheets (M2) · patrol schedule (M3). Each appears here when its milestone
-          lands.
+          Anthropic API key (letters, extraction, vision — M4) · patrol schedule (M3). Each appears
+          here when its milestone lands.
         </p>
       </div>
     </div>
