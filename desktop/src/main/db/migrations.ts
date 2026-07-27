@@ -220,6 +220,13 @@ const MIGRATIONS: string[] = [
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
+  `,
+
+  // 003 — idempotency keys for the M2 importers: re-running any import
+  // must be a no-op, enforced by the database, not by importer discipline
+  `
+  CREATE UNIQUE INDEX idx_evidence_path ON evidence_files(path) WHERE path IS NOT NULL;
+  CREATE UNIQUE INDEX idx_cases_local_folder ON cases(local_folder_path) WHERE local_folder_path IS NOT NULL;
   `
 ]
 

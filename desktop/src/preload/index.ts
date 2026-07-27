@@ -20,7 +20,11 @@ const api: FafoApi = {
     const listener = (_e: Electron.IpcRendererEvent, event: MsAuthEvent): void => cb(event)
     ipcRenderer.on('fafo:msAuthEvent', listener)
     return () => ipcRenderer.removeListener('fafo:msAuthEvent', listener)
-  }
+  },
+  importSnapshotStatus: () => ipcRenderer.invoke('fafo:importSnapshotStatus'),
+  importSignnowSnapshot: () => ipcRenderer.invoke('fafo:importSignnowSnapshot'),
+  importScanLocal: () => ipcRenderer.invoke('fafo:importScanLocal'),
+  importCommitLocal: () => ipcRenderer.invoke('fafo:importCommitLocal')
 }
 
 contextBridge.exposeInMainWorld('fafo', api)

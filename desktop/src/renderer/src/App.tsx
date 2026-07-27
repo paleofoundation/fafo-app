@@ -5,8 +5,9 @@ import { Cases } from './features/Cases'
 import { Licensees } from './features/Licensees'
 import { Marks } from './features/Marks'
 import { Settings } from './features/Settings'
+import { Import } from './features/Import'
 
-const TABS = ['Dashboard', 'Cases', 'Licensees', 'Trademarks', 'Settings'] as const
+const TABS = ['Dashboard', 'Cases', 'Licensees', 'Trademarks', 'Import', 'Settings'] as const
 type Tab = (typeof TABS)[number]
 
 export function App(): React.JSX.Element {
@@ -41,6 +42,7 @@ export function App(): React.JSX.Element {
         {tab === 'Cases' && <Cases onDeadlinesChanged={refreshDeadlines} />}
         {tab === 'Licensees' && <Licensees />}
         {tab === 'Trademarks' && <Marks />}
+        {tab === 'Import' && <Import onChanged={refreshDeadlines} />}
         {tab === 'Settings' && <Settings />}
       </main>
     </div>

@@ -1,8 +1,52 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, app, ipcMain } from 'electron'
+import fs from 'node:fs'
 import { openDb } from './db'
 import * as q from './db/queries'
 import { msSignIn, msSignOut, msStatus } from './services/msgraph'
-import type { CasePatch, EventKind, NewCaseInput, NewDeadlineInput } from '../shared/types'
+import {
+  commitLocalCases,
+  scanLocalCases,
+  type LocalScanReport
+} from './services/ingest/localCases'
+import {
+  importSignnowSnapshot,
+  readSnapshot,
+  snapshotPath
+} from './services/ingest/signnowSnapshot'
+import type {
+  CasePatch,
+  EventKind,
+  LocalScanSummary,
+  NewCaseInput,
+  NewDeadlineInput,
+  SnapshotStatus
+} from '../shared/types'
+
+/** Full scan (with per-file lists) cached main-side between dry run and commit. */
+let lastScan: LocalScanReport | null = null
+
+function summarize(report: LocalScanReport): LocalScanSummary {
+  return {
+    root: report.root,
+    scannedAt: report.scannedAt,
+    totals: report.totals,
+    folders: report.folders.map((f) => ({
+      folderPath: f.folderPath,
+      folderName: f.folderName,
+      caseType: f.caseType,
+      primaryName: f.primaryName,
+      relatedEntity: f.relatedEntity,
+      matchedLicenseeName: f.matchedLicenseeName,
+      willLinkExistingCase: f.existingCaseId !== null,
+      alreadyImported: f.alreadyImported,
+      fileCount: f.files.length,
+      evidenceSessions: f.evidenceSessions,
+      earliestEvidence: f.earliestEvidence,
+      latestEvidence: f.latestEvidence,
+      flags: f.flags
+    }))
+  }
+}
 
 /**
  * IPC channel names mirror the FafoApi method names 1:1 (prefixed "fafo:").
@@ -37,4 +81,28 @@ export function registerIpc(): void {
     })
   )
   ipcMain.handle('fafo:msSignOut', () => msSignOut(db))
+
+  ipcMain.handle('fafo:importSnapshotStatus', (): SnapshotStatus => {
+    const file = snapshotPath(app.getPath('userData'))
+    if (!fs.existsSync(file)) return { present: false }
+    try {
+      const snap = readSnapshot(file)
+      return { present: true, exportedAt: snap.exportedAt, total: snap.total }
+    } catch {
+      return { present: false }
+    }
+  })
+  ipcMain.handle('fafo:importSignnowSnapshot', () =>
+    importSignnowSnapshot(db, readSnapshot(snapshotPath(app.getPath('userData'))))
+  )
+  ipcMain.handle('fafo:importScanLocal', () => {
+    lastScan = scanLocalCases(db)
+    return summarize(lastScan)
+  })
+  ipcMain.handle('fafo:importCommitLocal', () => {
+    if (!lastScan) throw new Error('Run the dry-run scan first — nothing staged to commit')
+    const result = commitLocalCases(db, lastScan)
+    lastScan = null
+    return result
+  })
 }

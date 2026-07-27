@@ -173,6 +173,60 @@ export interface MsDeviceCode {
 
 export type MsAuthEvent = { type: 'signedIn'; username: string } | { type: 'error'; message: string }
 
+export interface LocalScanFolderSummary {
+  folderPath: string
+  folderName: string
+  caseType: string
+  primaryName: string
+  relatedEntity: string | null
+  matchedLicenseeName: string | null
+  willLinkExistingCase: boolean
+  alreadyImported: boolean
+  fileCount: number
+  evidenceSessions: number
+  earliestEvidence: string | null
+  latestEvidence: string | null
+  flags: string[]
+}
+
+export interface LocalScanSummary {
+  root: string
+  scannedAt: string
+  totals: {
+    folders: number
+    files: number
+    matchedExisting: number
+    newLicensees: number
+    alreadyImported: number
+    flagged: number
+  }
+  folders: LocalScanFolderSummary[]
+}
+
+export interface LocalCommitResult {
+  casesCreated: number
+  casesLinked: number
+  licenseesCreated: number
+  evidenceAdded: number
+  evidenceSkipped: number
+  skippedFolders: number
+}
+
+export interface SnapshotImportResult {
+  groupsSeen: number
+  licenseesCreated: number
+  licensesCreated: number
+  licensesUpdated: number
+  unparsedNames: string[]
+  activeLicenses: number
+}
+
+export interface SnapshotStatus {
+  present: boolean
+  exportedAt?: string
+  total?: number
+}
+
 /** The typed surface exposed to the renderer via contextBridge as window.fafo. */
 export interface FafoApi {
   listCases(): Promise<CaseRow[]>
@@ -191,4 +245,10 @@ export interface FafoApi {
   msSignOut(): Promise<void>
   /** Subscribe to sign-in completion/errors; returns an unsubscribe fn. */
   onMsAuthEvent(cb: (e: MsAuthEvent) => void): () => void
+  importSnapshotStatus(): Promise<SnapshotStatus>
+  importSignnowSnapshot(): Promise<SnapshotImportResult>
+  /** Read-only scan of the local Infringement Cases archive (dry run). */
+  importScanLocal(): Promise<LocalScanSummary>
+  /** Commits the most recent scan — only callable after importScanLocal. */
+  importCommitLocal(): Promise<LocalCommitResult>
 }
