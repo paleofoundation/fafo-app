@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { FafoApi } from '../shared/types'
+import type { FafoApi, MsAuthEvent } from '../shared/types'
 
 const api: FafoApi = {
   listCases: () => ipcRenderer.invoke('fafo:listCases'),
@@ -12,7 +12,15 @@ const api: FafoApi = {
   satisfyDeadline: (id, satisfied) => ipcRenderer.invoke('fafo:satisfyDeadline', id, satisfied),
   dismissDeadline: (id) => ipcRenderer.invoke('fafo:dismissDeadline', id),
   listMarks: () => ipcRenderer.invoke('fafo:listMarks'),
-  listLicensees: () => ipcRenderer.invoke('fafo:listLicensees')
+  listLicensees: () => ipcRenderer.invoke('fafo:listLicensees'),
+  msStatus: () => ipcRenderer.invoke('fafo:msStatus'),
+  msSignIn: () => ipcRenderer.invoke('fafo:msSignIn'),
+  msSignOut: () => ipcRenderer.invoke('fafo:msSignOut'),
+  onMsAuthEvent: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, event: MsAuthEvent): void => cb(event)
+    ipcRenderer.on('fafo:msAuthEvent', listener)
+    return () => ipcRenderer.removeListener('fafo:msAuthEvent', listener)
+  }
 }
 
 contextBridge.exposeInMainWorld('fafo', api)

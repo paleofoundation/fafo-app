@@ -210,6 +210,16 @@ const MIGRATIONS: string[] = [
     cursor TEXT,
     last_full_sync_at TEXT
   );
+  `,
+
+  // 002 — app settings (non-secret config; tokens are NEVER stored here —
+  // they live in the safeStorage-encrypted cache file)
+  `
+  CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
   `
 ]
 

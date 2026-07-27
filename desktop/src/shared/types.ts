@@ -156,6 +156,23 @@ export interface NewDeadlineInput {
   refId?: number
 }
 
+export interface MsAuthStatus {
+  connected: boolean
+  username: string | null
+  clientId: string
+  tenantId: string
+  cacheEncrypted: boolean
+}
+
+export interface MsDeviceCode {
+  userCode: string
+  verificationUri: string
+  message: string
+  expiresInSeconds: number
+}
+
+export type MsAuthEvent = { type: 'signedIn'; username: string } | { type: 'error'; message: string }
+
 /** The typed surface exposed to the renderer via contextBridge as window.fafo. */
 export interface FafoApi {
   listCases(): Promise<CaseRow[]>
@@ -169,4 +186,9 @@ export interface FafoApi {
   dismissDeadline(id: number): Promise<void>
   listMarks(): Promise<Mark[]>
   listLicensees(): Promise<Licensee[]>
+  msStatus(): Promise<MsAuthStatus>
+  msSignIn(): Promise<MsDeviceCode>
+  msSignOut(): Promise<void>
+  /** Subscribe to sign-in completion/errors; returns an unsubscribe fn. */
+  onMsAuthEvent(cb: (e: MsAuthEvent) => void): () => void
 }

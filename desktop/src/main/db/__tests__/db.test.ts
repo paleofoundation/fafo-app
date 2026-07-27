@@ -87,6 +87,13 @@ describe('db layer (in-memory)', () => {
     expect(a.licenseeId).toBe(rawcology[0]!.id)
   })
 
+  it('settings round-trip and upsert', () => {
+    expect(q.getSetting(db, 'ms.clientId')).toBeNull()
+    q.setSetting(db, 'ms.clientId', 'abc')
+    q.setSetting(db, 'ms.clientId', 'def')
+    expect(q.getSetting(db, 'ms.clientId')).toBe('def')
+  })
+
   it('marks seed includes the legal caveats that letters must respect', () => {
     const marks = q.listMarks(db)
     expect(marks).toHaveLength(7)

@@ -1,6 +1,7 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { openDb } from './db'
 import * as q from './db/queries'
+import { msSignIn, msSignOut, msStatus } from './services/msgraph'
 import type { CasePatch, EventKind, NewCaseInput, NewDeadlineInput } from '../shared/types'
 
 /**
@@ -26,4 +27,14 @@ export function registerIpc(): void {
   ipcMain.handle('fafo:dismissDeadline', (_e, id: number) => q.dismissDeadline(db, id))
   ipcMain.handle('fafo:listMarks', () => q.listMarks(db))
   ipcMain.handle('fafo:listLicensees', () => q.listLicensees(db))
+
+  ipcMain.handle('fafo:msStatus', () => msStatus(db))
+  ipcMain.handle('fafo:msSignIn', () =>
+    msSignIn(db, (event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('fafo:msAuthEvent', event)
+      }
+    })
+  )
+  ipcMain.handle('fafo:msSignOut', () => msSignOut(db))
 }
