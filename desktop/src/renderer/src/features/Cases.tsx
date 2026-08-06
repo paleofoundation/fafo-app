@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type {
+  CaseDeletionPreview,
   CaseEvent,
   CaseRow,
   CaseStatus,
@@ -17,6 +18,59 @@ const STATUS_PILL: Record<CaseStatus, string> = {
   Resolved: 'resolved'
 }
 
+/** Workflow order, not alphabetical — live matters sort above closed ones. */
+const STATUS_ORDER: Record<CaseStatus, number> = {
+  Open: 0,
+  'In Progress': 1,
+  Resolved: 2
+}
+
+type SortKey = 'title' | 'type' | 'status' | 'openedAt'
+type SortDir = 'asc' | 'desc'
+
+const COLUMNS: Array<{ key: SortKey; label: string; defaultWidth: number }> = [
+  { key: 'title', label: 'Matter', defaultWidth: 260 },
+  { key: 'type', label: 'Type', defaultWidth: 150 },
+  { key: 'status', label: 'Status', defaultWidth: 110 },
+  { key: 'openedAt', label: 'Opened', defaultWidth: 105 }
+]
+
+const WIDTHS_KEY = 'fafo.cases.columnWidths'
+const SORT_KEY = 'fafo.cases.sort'
+const MIN_WIDTH = 70
+
+function loadWidths(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(WIDTHS_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function loadSort(): { key: SortKey; dir: SortDir } {
+  try {
+    const raw = localStorage.getItem(SORT_KEY)
+    if (raw) return JSON.parse(raw) as { key: SortKey; dir: SortDir }
+  } catch {
+    /* fall through to the default */
+  }
+  return { key: 'openedAt', dir: 'desc' }
+}
+
+function compareCases(a: CaseRow, b: CaseRow, key: SortKey): number {
+  switch (key) {
+    case 'status':
+      return STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
+    case 'openedAt':
+      return a.openedAt.localeCompare(b.openedAt)
+    case 'type':
+      return a.type.localeCompare(b.type)
+    case 'title':
+      return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
+  }
+}
+
 export function Cases({
   onDeadlinesChanged
 }: {
@@ -25,6 +79,9 @@ export function Cases({
   const [cases, setCases] = useState<CaseRow[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showNew, setShowNew] = useState(false)
+  const [sort, setSort] = useState(loadSort)
+  const [widths, setWidths] = useState<Record<string, number>>(loadWidths)
+  const [filter, setFilter] = useState('')
 
   const refresh = useCallback(async () => {
     setCases(await window.fafo.listCases())
@@ -33,6 +90,65 @@ export function Cases({
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    localStorage.setItem(SORT_KEY, JSON.stringify(sort))
+  }, [sort])
+
+  function widthOf(key: string): number {
+    return widths[key] ?? COLUMNS.find((c) => c.key === key)!.defaultWidth
+  }
+
+  function toggleSort(key: SortKey): void {
+    setSort((s) =>
+      s.key === key
+        ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+        : // Dates start newest-first; text starts A–Z.
+          { key, dir: key === 'openedAt' ? 'desc' : 'asc' }
+    )
+  }
+
+  /** Drag a header edge to resize; persisted so it survives restarts. */
+  function startResize(key: string, e: React.MouseEvent): void {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startWidth = widthOf(key)
+    const onMove = (ev: MouseEvent): void => {
+      const next = Math.max(MIN_WIDTH, startWidth + (ev.clientX - startX))
+      setWidths((w) => ({ ...w, [key]: next }))
+    }
+    const onUp = (): void => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      setWidths((w) => {
+        localStorage.setItem(WIDTHS_KEY, JSON.stringify(w))
+        return w
+      })
+      document.body.style.cursor = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
+  function resetLayout(): void {
+    setWidths({})
+    localStorage.removeItem(WIDTHS_KEY)
+  }
+
+  const visible = cases
+    .filter((c) =>
+      filter
+        ? `${c.title} ${c.licenseeName ?? ''} ${c.type}`.toLowerCase().includes(filter.toLowerCase())
+        : true
+    )
+    .slice()
+    .sort((a, b) => {
+      const cmp = compareCases(a, b, sort.key)
+      // Stable, predictable tiebreak so equal keys don't shuffle between renders.
+      return (sort.dir === 'asc' ? cmp : -cmp) || a.title.localeCompare(b.title)
+    })
 
   return (
     <div>
@@ -56,29 +172,69 @@ export function Cases({
         />
       )}
 
+      <div className="add-row" style={{ marginBottom: 10 }}>
+        <input
+          type="text"
+          placeholder="Filter cases…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <span className="deadline-meta" style={{ alignSelf: 'center' }}>
+          {visible.length} of {cases.length}
+        </span>
+        <button className="subtle" onClick={resetLayout} title="Reset column widths">
+          Reset columns
+        </button>
+      </div>
+
       <div className="split">
-        <div className="card" style={{ padding: 0 }}>
-          <table>
+        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+          <table style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
             <thead>
               <tr>
-                <th>Matter</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Opened</th>
+                {COLUMNS.map((col) => (
+                  <th
+                    key={col.key}
+                    style={{ width: widthOf(col.key), position: 'relative', userSelect: 'none' }}
+                  >
+                    <span
+                      onClick={() => toggleSort(col.key)}
+                      style={{ cursor: 'pointer', display: 'inline-flex', gap: 4 }}
+                      title={`Sort by ${col.label.toLowerCase()}`}
+                    >
+                      {col.label}
+                      <span style={{ opacity: sort.key === col.key ? 1 : 0.25 }}>
+                        {sort.key === col.key ? (sort.dir === 'asc' ? '▲' : '▼') : '▲'}
+                      </span>
+                    </span>
+                    <span
+                      onMouseDown={(e) => startResize(col.key, e)}
+                      title="Drag to resize"
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        right: -3,
+                        width: 7,
+                        height: '100%',
+                        cursor: 'col-resize'
+                      }}
+                    />
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {cases.map((c) => (
+              {visible.map((c) => (
                 <tr
                   key={c.id}
                   className="clickable"
                   onClick={() => setSelectedId(c.id)}
                   style={selectedId === c.id ? { outline: '2px solid var(--navy)', outlineOffset: -2 } : undefined}
                 >
-                  <td>
-                    <strong>{c.title}</strong>
+                  <td style={{ overflow: 'hidden' }}>
+                    <strong style={{ display: 'block', overflowWrap: 'anywhere' }}>{c.title}</strong>
                     {c.markCodes && c.markCodes.length > 0 && (
-                      <div style={{ marginTop: 3, display: 'flex', gap: 4 }}>
+                      <div style={{ marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {c.markCodes.map((m) => (
                           <span key={m} className="pill mark">
                             {m}
@@ -87,22 +243,34 @@ export function Cases({
                       </div>
                     )}
                   </td>
-                  <td style={{ fontSize: 12.5 }}>{c.type}</td>
-                  <td>
+                  <td style={{ fontSize: 12.5, overflow: 'hidden', overflowWrap: 'anywhere' }}>
+                    {c.type}
+                  </td>
+                  <td style={{ overflow: 'hidden' }}>
                     <span className={`pill ${STATUS_PILL[c.status]}`}>{c.status}</span>
                   </td>
-                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{c.openedAt}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', overflow: 'hidden' }}>
+                    {c.openedAt}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
           {cases.length === 0 && <div className="empty">No cases yet.</div>}
+          {cases.length > 0 && visible.length === 0 && (
+            <div className="empty">No cases match “{filter}”.</div>
+          )}
         </div>
 
         {selectedId !== null && (
           <CaseDetail
             id={selectedId}
             onChanged={async () => {
+              await refresh()
+              await onDeadlinesChanged()
+            }}
+            onDeleted={async () => {
+              setSelectedId(null)
               await refresh()
               await onDeadlinesChanged()
             }}
@@ -155,7 +323,15 @@ function InlineField({
   )
 }
 
-function CaseDetail({ id, onChanged }: { id: number; onChanged: () => Promise<void> }): React.JSX.Element {
+function CaseDetail({
+  id,
+  onChanged,
+  onDeleted
+}: {
+  id: number
+  onChanged: () => Promise<void>
+  onDeleted: () => Promise<void>
+}): React.JSX.Element {
   const [data, setData] = useState<{ case: CaseRow; events: CaseEvent[]; deadlines: Deadline[] } | null>(null)
   const [note, setNote] = useState('')
   const [dl, setDl] = useState<{ title: string; dueAt: string; kind: DeadlineKind }>({
@@ -215,6 +391,7 @@ function CaseDetail({ id, onChanged }: { id: number; onChanged: () => Promise<vo
           options={['Unassigned', 'JP', 'Trestle']}
           onSave={(v) => patch({ resolvedBy: v === 'Unassigned' ? null : (v as 'JP' | 'Trestle') })}
         />
+        <DeleteCase caseId={id} title={c.title} onDeleted={onDeleted} />
       </div>
 
       <div className="card">
@@ -276,6 +453,126 @@ function CaseDetail({ id, onChanged }: { id: number; onChanged: () => Promise<vo
 }
 
 const money = (n: number): string => `$${Math.round(n).toLocaleString()}`
+
+/**
+ * Deleting a case is for duplicates, but the same button on a real matter
+ * would take its payments and letters with it — so the confirmation names
+ * exactly what goes, and typing the case title is required to proceed.
+ */
+function DeleteCase({
+  caseId,
+  title,
+  onDeleted
+}: {
+  caseId: number
+  title: string
+  onDeleted: () => Promise<void>
+}): React.JSX.Element {
+  const [preview, setPreview] = useState<CaseDeletionPreview | null>(null)
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function open(): Promise<void> {
+    setError(null)
+    setTyped('')
+    try {
+      setPreview(await window.fafo.previewCaseDeletion(caseId))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function confirm(): Promise<void> {
+    setBusy(true)
+    try {
+      await window.fafo.deleteCase(caseId)
+      setPreview(null)
+      await onDeleted()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+
+  if (!preview) {
+    return (
+      <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+        <button
+          className="subtle"
+          style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
+          onClick={() => void open()}
+        >
+          Delete case…
+        </button>
+        {error && <span style={{ color: 'var(--danger)', marginLeft: 8 }}>{error}</span>}
+      </div>
+    )
+  }
+
+  const items = (
+    [
+      ['timeline entries', preview.events],
+      ['deadlines', preview.deadlines],
+      ['letters/referrals', preview.letters],
+      ['payments', preview.payments],
+      ['evidence references', preview.evidenceFiles],
+      ['tracked URLs', preview.trackedUrls],
+      ['settlement records', preview.settlements]
+    ] as Array<[string, number]>
+  ).filter((entry) => entry[1] > 0)
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        border: '1px solid var(--danger)',
+        borderRadius: 8,
+        padding: '10px 12px',
+        background: 'var(--danger-bg)'
+      }}
+    >
+      <strong style={{ fontSize: 13, color: 'var(--danger)' }}>
+        Permanently delete “{preview.title}”?
+      </strong>
+      <p className="subtitle" style={{ margin: '5px 0' }}>
+        {items.length === 0
+          ? 'This case has no attached records.'
+          : `This also deletes ${items.map(([l, n]) => `${n} ${l}`).join(', ')}.`}
+        {preview.payments > 0 && (
+          <>
+            {' '}
+            <strong>
+              {money(preview.paymentsCents / 100)} of recorded payments will leave your metrics.
+            </strong>
+          </>
+        )}{' '}
+        Evidence files in the archive are not touched — only the app&rsquo;s references to them.
+        This cannot be undone.
+      </p>
+      <div className="add-row">
+        <input
+          type="text"
+          placeholder={`Type the case name to confirm`}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+        />
+        <button
+          className="outline"
+          style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
+          disabled={busy || typed.trim() !== preview.title.trim()}
+          onClick={() => void confirm()}
+        >
+          {busy ? 'Deleting…' : 'Delete permanently'}
+        </button>
+        <button className="subtle" onClick={() => setPreview(null)}>
+          Cancel
+        </button>
+      </div>
+      {error && <p style={{ color: 'var(--danger)', marginTop: 8 }}>{error}</p>}
+    </div>
+  )
+}
 
 function SettlementCard({ caseId }: { caseId: number }): React.JSX.Element {
   const [quote, setQuote] = useState<SettlementQuote | null>(null)

@@ -87,6 +87,74 @@ describe('db layer (in-memory)', () => {
     expect(a.licenseeId).toBe(rawcology[0]!.id)
   })
 
+  it('previews and deletes a case with all of its children', () => {
+    const target = q.createCase(db, {
+      title: 'Duplicate Co',
+      licenseeName: 'Duplicate Co',
+      type: 'Expired License',
+      status: 'Open',
+      source: 'Website',
+      openedAt: '2026-01-01'
+    })
+    q.addEvent(db, target.id, 'note', 'a note')
+    q.addDeadline(db, {
+      kind: 'custom',
+      title: 'something',
+      dueAt: '2026-02-01',
+      refTable: 'cases',
+      refId: target.id
+    })
+    db.prepare(
+      `INSERT INTO payments (case_id, amount_cents, received_date, received, year)
+       VALUES (?, 250000, '2026-01-15', 1, 2026)`
+    ).run(target.id)
+    db.prepare(
+      `INSERT INTO letters (case_id, kind, body_text, drafted_at) VALUES (?, 'enforcement', 'x', '2026-01-02')`
+    ).run(target.id)
+    db.prepare(
+      `INSERT INTO evidence_files (case_id, path, kind) VALUES (?, '/tmp/shot.png', 'screenshot')`
+    ).run(target.id)
+
+    const preview = q.previewCaseDeletion(db, target.id)
+    expect(preview.title).toBe('Duplicate Co')
+    expect(preview.events).toBe(2) // opened + the note
+    expect(preview.deadlines).toBe(1)
+    expect(preview.letters).toBe(1)
+    expect(preview.payments).toBe(1)
+    expect(preview.paymentsCents).toBe(250_000)
+    expect(preview.evidenceFiles).toBe(1)
+
+    const otherCases = q.listCases(db).length
+    q.deleteCase(db, target.id)
+
+    expect(q.getCase(db, target.id)).toBeNull()
+    expect(q.listCases(db)).toHaveLength(otherCases - 1)
+    // No orphaned children left behind in any child table.
+    for (const [table, col] of [
+      ['case_events', 'case_id'],
+      ['letters', 'case_id'],
+      ['payments', 'case_id'],
+      ['evidence_files', 'case_id'],
+      ['tracked_urls', 'case_id'],
+      ['settlements', 'case_id']
+    ] as Array<[string, string]>) {
+      const n = db
+        .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`)
+        .get(target.id) as { n: number }
+      expect(n.n, table).toBe(0)
+    }
+    const dl = db
+      .prepare("SELECT COUNT(*) AS n FROM deadlines WHERE ref_table = 'cases' AND ref_id = ?")
+      .get(target.id) as { n: number }
+    expect(dl.n).toBe(0)
+    // The licensee itself survives — only the case was a duplicate.
+    expect(q.listLicensees(db).some((l) => l.name === 'Duplicate Co')).toBe(true)
+  })
+
+  it('refuses to preview a case that does not exist', () => {
+    expect(() => q.previewCaseDeletion(db, 999_999)).toThrow(/not found/)
+  })
+
   it('settings round-trip and upsert', () => {
     expect(q.getSetting(db, 'ms.clientId')).toBeNull()
     q.setSetting(db, 'ms.clientId', 'abc')

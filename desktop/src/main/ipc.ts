@@ -111,6 +111,8 @@ export function registerIpc(): void {
   ipcMain.handle('fafo:addEvent', (_e, caseId: number, kind: EventKind, body: string, at?: string) =>
     q.addEvent(db, caseId, kind, body, at)
   )
+  ipcMain.handle('fafo:previewCaseDeletion', (_e, id: number) => q.previewCaseDeletion(db, id))
+  ipcMain.handle('fafo:deleteCase', (_e, id: number) => q.deleteCase(db, id))
   ipcMain.handle('fafo:listDeadlines', () => q.listDeadlines(db))
   ipcMain.handle('fafo:addDeadline', (_e, input: NewDeadlineInput) => q.addDeadline(db, input))
   ipcMain.handle('fafo:satisfyDeadline', (_e, id: number, satisfied: boolean) =>

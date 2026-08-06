@@ -448,6 +448,19 @@ export interface MetricsImportResult {
   statusCorrected: number
 }
 
+export interface CaseDeletionPreview {
+  caseId: number
+  title: string
+  events: number
+  deadlines: number
+  letters: number
+  payments: number
+  paymentsCents: number
+  evidenceFiles: number
+  trackedUrls: number
+  settlements: number
+}
+
 export interface ExportResult {
   path: string
   driveUrl: string | null
@@ -474,6 +487,9 @@ export interface FafoApi {
   createCase(input: NewCaseInput): Promise<CaseRow>
   updateCase(id: number, patch: CasePatch): Promise<CaseRow>
   addEvent(caseId: number, kind: EventKind, body: string, at?: string): Promise<CaseEvent>
+  /** Read-only: what deleting this case would take with it. */
+  previewCaseDeletion(id: number): Promise<CaseDeletionPreview>
+  deleteCase(id: number): Promise<CaseDeletionPreview>
   listDeadlines(): Promise<Deadline[]>
   addDeadline(input: NewDeadlineInput): Promise<Deadline>
   satisfyDeadline(id: number, satisfied: boolean): Promise<void>

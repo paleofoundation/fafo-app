@@ -186,6 +186,73 @@ export function addEvent(
     .get(id) as CaseEvent
 }
 
+/**
+ * What would be destroyed along with a case. Shown before deleting so the
+ * choice is informed — deleting a duplicate is routine, but the same call on a
+ * real matter would take its payments and letters with it.
+ */
+export interface CaseDeletionPreview {
+  caseId: number
+  title: string
+  events: number
+  deadlines: number
+  letters: number
+  payments: number
+  paymentsCents: number
+  evidenceFiles: number
+  trackedUrls: number
+  settlements: number
+}
+
+export function previewCaseDeletion(db: Database.Database, id: number): CaseDeletionPreview {
+  const c = db.prepare('SELECT title FROM cases WHERE id = ?').get(id) as
+    | { title: string }
+    | undefined
+  if (!c) throw new Error(`Case ${id} not found`)
+  const count = (sql: string): number => (db.prepare(sql).get(id) as { n: number }).n
+  const pay = db
+    .prepare(
+      'SELECT COUNT(*) AS n, COALESCE(SUM(amount_cents), 0) AS cents FROM payments WHERE case_id = ?'
+    )
+    .get(id) as { n: number; cents: number }
+  return {
+    caseId: id,
+    title: c.title,
+    events: count('SELECT COUNT(*) AS n FROM case_events WHERE case_id = ?'),
+    deadlines: count(
+      "SELECT COUNT(*) AS n FROM deadlines WHERE ref_table = 'cases' AND ref_id = ?"
+    ),
+    letters: count('SELECT COUNT(*) AS n FROM letters WHERE case_id = ?'),
+    payments: pay.n,
+    paymentsCents: pay.cents,
+    evidenceFiles: count('SELECT COUNT(*) AS n FROM evidence_files WHERE case_id = ?'),
+    trackedUrls: count('SELECT COUNT(*) AS n FROM tracked_urls WHERE case_id = ?'),
+    settlements: count('SELECT COUNT(*) AS n FROM settlements WHERE case_id = ?')
+  }
+}
+
+/**
+ * Delete a case and everything hanging off it. Foreign keys are enforced, so
+ * children must go first. Evidence rows are references — the underlying files
+ * in the archive are never touched.
+ */
+export function deleteCase(db: Database.Database, id: number): CaseDeletionPreview {
+  const preview = previewCaseDeletion(db, id)
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM deadlines WHERE ref_table = 'cases' AND ref_id = ?").run(id)
+    db.prepare('DELETE FROM case_events WHERE case_id = ?').run(id)
+    db.prepare('DELETE FROM letters WHERE case_id = ?').run(id)
+    db.prepare('DELETE FROM payments WHERE case_id = ?').run(id)
+    db.prepare('DELETE FROM evidence_files WHERE case_id = ?').run(id)
+    db.prepare('DELETE FROM tracked_urls WHERE case_id = ?').run(id)
+    db.prepare('DELETE FROM settlements WHERE case_id = ?').run(id)
+    db.prepare('UPDATE cases SET watch_item_id = NULL WHERE id = ?').run(id)
+    db.prepare('DELETE FROM cases WHERE id = ?').run(id)
+  })
+  tx()
+  return preview
+}
+
 export function listDeadlines(db: Database.Database): Deadline[] {
   return db
     .prepare(
