@@ -10,6 +10,9 @@ import type {
   Deadline,
   DeadlineKind,
   DuplicatePaymentMatch,
+  EmailExtractionProgress,
+  EmailExtractionResult,
+  EmailExtractionStatus,
   LetterView,
   NewCaseInput,
   SettlementQuote
@@ -623,6 +626,117 @@ function LicenseCard({ caseId }: { caseId: number }): React.JSX.Element | null {
   )
 }
 
+/**
+ * Reads the case's email threads into the timeline. Each message becomes one
+ * dated entry, so the correspondence reads as a clock rather than a pile of
+ * PDFs. Undated messages are dropped rather than guessed at — the count is
+ * reported so a thread that mostly failed to parse is visible.
+ */
+function EmailThreadExtractor({
+  caseId,
+  onChanged
+}: {
+  caseId: number
+  onChanged: () => Promise<void>
+}): React.JSX.Element | null {
+  const [status, setStatus] = useState<EmailExtractionStatus | null>(null)
+  const [progress, setProgress] = useState<EmailExtractionProgress | null>(null)
+  const [result, setResult] = useState<EmailExtractionResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setStatus(await window.fafo.emailExtractionStatus(caseId))
+  }, [caseId])
+
+  useEffect(() => {
+    setResult(null)
+    setError(null)
+    void load()
+  }, [load])
+
+  useEffect(() => window.fafo.onEmailExtractionProgress(setProgress), [])
+
+  async function run(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setResult(null)
+    try {
+      setResult(await window.fafo.runEmailExtraction(25, caseId))
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setProgress(null)
+    setBusy(false)
+  }
+
+  if (!status || status.total === 0) return null
+
+  return (
+    <div style={{ marginTop: 8, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button
+          className="subtle"
+          disabled={busy || status.pending === 0 || !status.keyPresent}
+          onClick={() => void run()}
+          title={
+            status.keyPresent
+              ? 'Read each thread into dated timeline entries'
+              : 'Add an Anthropic API key in Settings first'
+          }
+        >
+          {busy
+            ? 'Reading threads…'
+            : status.pending === 0
+              ? 'All threads read'
+              : `Read ${status.pending} email thread${status.pending === 1 ? '' : 's'}`}
+        </button>
+        <span className="deadline-meta">
+          {status.extracted} of {status.total} read into the timeline
+        </span>
+      </div>
+
+      {busy && progress && (
+        <p className="deadline-meta" style={{ margin: '6px 0 0' }}>
+          {progress.processed}/{progress.total} · {progress.current}
+        </p>
+      )}
+      {!status.keyPresent && (
+        <p className="deadline-meta" style={{ margin: '6px 0 0' }}>
+          Needs an Anthropic API key — add one in Settings.
+        </p>
+      )}
+      {result && (
+        <p className="deadline-meta" style={{ margin: '6px 0 0' }}>
+          {result.eventsWritten} timeline entr{result.eventsWritten === 1 ? 'y' : 'ies'} from{' '}
+          {result.ok} thread{result.ok === 1 ? '' : 's'}
+          {result.undatedDropped > 0 &&
+            ` · ${result.undatedDropped} message${result.undatedDropped === 1 ? '' : 's'} had no date and were left out`}
+          {result.skipped > 0 &&
+            ` · ${result.skipped} screened out as bulk mail`}
+          {result.failed > 0 && ` · ${result.failed} failed`}
+          {result.remaining > 0 && ` · ${result.remaining} still pending`}
+        </p>
+      )}
+      {result && result.errors.length > 0 && (
+        <details style={{ marginTop: 6 }}>
+          <summary className="deadline-meta" style={{ cursor: 'pointer' }}>
+            {result.errors.length} problem{result.errors.length === 1 ? '' : 's'}
+          </summary>
+          {result.errors.map((e, i) => (
+            <p key={i} className="deadline-meta" style={{ margin: '3px 0' }}>
+              {e}
+            </p>
+          ))}
+        </details>
+      )}
+      {error && <p style={{ color: 'var(--danger)', margin: '6px 0 0', fontSize: 12.5 }}>{error}</p>}
+    </div>
+  )
+}
+
 function fileSize(bytes: number | null): string {
   if (bytes === null) return ''
   if (bytes < 1024) return `${bytes} B`
@@ -749,6 +863,8 @@ function FilesCard({
           folder under LEGAL/Infringement Cases.
         </p>
       )}
+
+      <EmailThreadExtractor caseId={caseId} onChanged={onChanged} />
 
       {data.byKind.length > 0 && (
         <p style={{ margin: '8px 0 4px', fontSize: 13 }}>

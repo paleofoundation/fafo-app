@@ -39,6 +39,10 @@ import {
   scanCaseImport,
   type CaseImportScan
 } from './services/ingest/casesImport'
+import {
+  emailExtractionCounts,
+  runEmailExtraction
+} from './services/ingest/emailThreads'
 import { syncSignnow } from './services/signnowApi'
 import { extractionCounts, runExtraction } from './services/ingest/extractionRunner'
 import {
@@ -293,6 +297,22 @@ export function registerIpc(): void {
     (_e, caseId: number, amountCents: number, date: string) =>
       findDuplicatePayment(db, caseId, amountCents, date)
   )
+  ipcMain.handle('fafo:emailExtractionStatus', (_e, caseId?: number) => ({
+    ...emailExtractionCounts(db, caseId),
+    keyPresent: hasSecret(SECRET_ANTHROPIC_API_KEY)
+  }))
+  ipcMain.handle('fafo:runEmailExtraction', async (_e, limit: number, caseId?: number) => {
+    const key = getSecret(SECRET_ANTHROPIC_API_KEY)
+    if (!key) throw new Error('No Anthropic API key stored — add one in Settings')
+    return runEmailExtraction(db, key, limit, {
+      caseId,
+      onProgress: (p) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('fafo:emailExtractionProgress', p)
+        }
+      }
+    })
+  })
   ipcMain.handle('fafo:caseLicenseFacts', (_e, caseId: number) => q.caseLicenseFacts(db, caseId))
   ipcMain.handle('fafo:listCaseFiles', (_e, caseId: number) => listCaseFiles(db, caseId))
   ipcMain.handle('fafo:refreshCaseFiles', (_e, caseId: number) => refreshCaseFiles(db, caseId))

@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ExtractionProgressEvent, FafoApi, MsAuthEvent } from '../shared/types'
+import type {
+  EmailExtractionProgress,
+  ExtractionProgressEvent,
+  FafoApi,
+  MsAuthEvent
+} from '../shared/types'
 
 const api: FafoApi = {
   listCases: () => ipcRenderer.invoke('fafo:listCases'),
@@ -59,6 +64,14 @@ const api: FafoApi = {
   removeCasePayment: (id) => ipcRenderer.invoke('fafo:removeCasePayment', id),
   findDuplicatePayment: (caseId, amountCents, date) =>
     ipcRenderer.invoke('fafo:findDuplicatePayment', caseId, amountCents, date),
+  emailExtractionStatus: (caseId) => ipcRenderer.invoke('fafo:emailExtractionStatus', caseId),
+  runEmailExtraction: (limit, caseId) =>
+    ipcRenderer.invoke('fafo:runEmailExtraction', limit, caseId),
+  onEmailExtractionProgress: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, p: EmailExtractionProgress): void => cb(p)
+    ipcRenderer.on('fafo:emailExtractionProgress', listener)
+    return () => ipcRenderer.removeListener('fafo:emailExtractionProgress', listener)
+  },
   caseLicenseFacts: (caseId) => ipcRenderer.invoke('fafo:caseLicenseFacts', caseId),
   listCaseFiles: (caseId) => ipcRenderer.invoke('fafo:listCaseFiles', caseId),
   refreshCaseFiles: (caseId) => ipcRenderer.invoke('fafo:refreshCaseFiles', caseId),

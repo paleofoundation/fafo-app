@@ -86,6 +86,7 @@ export interface CaseRow {
 
 export type EventKind =
   | 'note'
+  | 'email'
   | 'letter_sent'
   | 'response'
   | 'evidence'
@@ -378,6 +379,32 @@ export interface DuplicatePaymentMatch {
   paymentId: number
   label: string
   sameCase: boolean
+}
+
+export interface EmailExtractionStatus {
+  total: number
+  extracted: number
+  pending: number
+  keyPresent: boolean
+}
+
+export interface EmailExtractionResult {
+  processed: number
+  ok: number
+  failed: number
+  skipped: number
+  eventsWritten: number
+  undatedDropped: number
+  errors: string[]
+  remaining: number
+}
+
+export interface EmailExtractionProgress {
+  processed: number
+  total: number
+  current: string
+  ok: number
+  failed: number
 }
 
 /** Agreement facts for a case, from the extracted license record. */
@@ -697,6 +724,9 @@ export interface FafoApi {
     amountCents: number,
     date: string
   ): Promise<DuplicatePaymentMatch | null>
+  emailExtractionStatus(caseId?: number): Promise<EmailExtractionStatus>
+  runEmailExtraction(limit: number, caseId?: number): Promise<EmailExtractionResult>
+  onEmailExtractionProgress(cb: (p: EmailExtractionProgress) => void): () => void
   caseLicenseFacts(caseId: number): Promise<CaseLicenseFacts | null>
   listCaseFiles(caseId: number): Promise<CaseFiles>
   refreshCaseFiles(caseId: number): Promise<FolderRefresh>

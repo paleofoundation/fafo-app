@@ -242,6 +242,16 @@ const MIGRATIONS: string[] = [
   // collapses into a single "Legacy entry" bucket and the by-type split lies.
   `
   ALTER TABLE payments ADD COLUMN infringement_type TEXT;
+  `,
+
+  // 006 — email-thread extraction bookkeeping. Marks which evidence files have
+  // been read into the timeline, so a re-run skips them rather than paying for
+  // the same thread twice. Distinguishes "read, nothing datable in it" (set,
+  // with 0 events) from "never read" (NULL) — a count of derived events can't.
+  `
+  ALTER TABLE evidence_files ADD COLUMN extracted_at TEXT;
+  ALTER TABLE evidence_files ADD COLUMN extraction_note TEXT;
+  CREATE INDEX idx_evidence_extracted ON evidence_files(kind, extracted_at);
   `
 ]
 
