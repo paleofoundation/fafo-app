@@ -27,6 +27,12 @@ import {
   type MetricsExport,
   type MetricsImportPlan
 } from './services/ingest/metricsImport'
+import {
+  CASE_IMPORT_COLUMN_HELP,
+  commitCaseImport,
+  scanCaseImport,
+  type CaseImportScan
+} from './services/ingest/casesImport'
 import { syncSignnow } from './services/signnowApi'
 import { extractionCounts, runExtraction } from './services/ingest/extractionRunner'
 import {
@@ -53,6 +59,7 @@ import {
   policingRecord,
   policingRecordMarkdown,
   removeCasePayment,
+  updateCasePayment,
   removeLegacyPayment,
   unrecordedSettlements,
   type CasePaymentInput,
@@ -268,6 +275,9 @@ export function registerIpc(): void {
   ipcMain.handle('fafo:addCasePayment', (_e, caseId: number, input: CasePaymentInput) =>
     addCasePayment(db, caseId, input)
   )
+  ipcMain.handle('fafo:updateCasePayment', (_e, id: number, input: CasePaymentInput) =>
+    updateCasePayment(db, id, input)
+  )
   ipcMain.handle('fafo:markPaymentReceived', (_e, id: number, receivedDate: string) =>
     markPaymentReceived(db, id, receivedDate)
   )
@@ -277,6 +287,28 @@ export function registerIpc(): void {
     (_e, caseId: number, amountCents: number, date: string) =>
       findDuplicatePayment(db, caseId, amountCents, date)
   )
+  let lastCaseImport: CaseImportScan | null = null
+  ipcMain.handle('fafo:casesImportColumns', () => CASE_IMPORT_COLUMN_HELP)
+  ipcMain.handle('fafo:casesImportPickFile', async () => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Choose a case list',
+      properties: ['openFile'],
+      filters: [{ name: 'Spreadsheet export', extensions: ['csv', 'tsv', 'txt'] }]
+    })
+    const file = picked.filePaths[0]
+    if (picked.canceled || !file) return null
+    return { name: path.basename(file), text: fs.readFileSync(file, 'utf8') }
+  })
+  ipcMain.handle('fafo:casesImportScan', (_e, text: string) => {
+    lastCaseImport = scanCaseImport(db, text, new Date().toISOString().slice(0, 10))
+    return lastCaseImport
+  })
+  ipcMain.handle('fafo:casesImportCommit', () => {
+    if (!lastCaseImport) throw new Error('Preview the case list first — nothing staged to import')
+    const result = commitCaseImport(db, lastCaseImport)
+    lastCaseImport = null
+    return result
+  })
   ipcMain.handle('fafo:listLegacyPayments', () => listLegacyPayments(db))
   ipcMain.handle('fafo:addLegacyPayment', (_e, input: LegacyEntryInput) =>
     addLegacyPayment(db, input)

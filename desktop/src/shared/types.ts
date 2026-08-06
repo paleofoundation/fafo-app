@@ -380,6 +380,74 @@ export interface DuplicatePaymentMatch {
   sameCase: boolean
 }
 
+/** Bulk case intake from a pasted spreadsheet or CSV/TSV file. */
+export type CaseImportField =
+  | 'matter'
+  | 'licensee'
+  | 'type'
+  | 'status'
+  | 'opened'
+  | 'source'
+  | 'url'
+  | 'settlement'
+  | 'credit'
+  | 'resolved'
+  | 'amount'
+  | 'paidOn'
+  | 'notes'
+
+export type CaseRowAction = 'create' | 'duplicate' | 'error'
+
+export interface CaseImportRow {
+  line: number
+  matter: string
+  licensee: string
+  type: CaseType
+  status: CaseStatus
+  source: CaseSource
+  openedAt: string
+  url: string | null
+  settlement: string | null
+  resolvedAt: string | null
+  resolvedBy: 'JP' | 'Trestle' | null
+  amountCents: number | null
+  paidOn: string | null
+  notes: string | null
+  action: CaseRowAction
+  matchedCaseTitle: string | null
+  messages: string[]
+  paymentDuplicate: boolean
+}
+
+export interface CaseImportScan {
+  recognized: CaseImportField[]
+  unrecognized: string[]
+  rows: CaseImportRow[]
+  totals: {
+    rows: number
+    create: number
+    duplicate: number
+    error: number
+    withPayments: number
+    paymentDuplicates: number
+    recoveredCents: number
+  }
+}
+
+export interface CaseImportResult {
+  casesCreated: number
+  paymentsRecorded: number
+  paymentsSkipped: number
+  notesAdded: number
+  skipped: number
+}
+
+export interface CaseImportColumnHelp {
+  field: CaseImportField
+  required: boolean
+  accepts: string
+}
+
 export interface LegacyEntry {
   id: number
   label: string
@@ -561,6 +629,7 @@ export interface FafoApi {
   metricsSummary(): Promise<MetricsSummary>
   listCasePayments(caseId: number): Promise<CasePayment[]>
   addCasePayment(caseId: number, input: CasePaymentInput): Promise<CasePayment>
+  updateCasePayment(id: number, input: CasePaymentInput): Promise<CasePayment>
   markPaymentReceived(id: number, receivedDate: string): Promise<void>
   removeCasePayment(id: number): Promise<void>
   findDuplicatePayment(
@@ -568,6 +637,10 @@ export interface FafoApi {
     amountCents: number,
     date: string
   ): Promise<DuplicatePaymentMatch | null>
+  casesImportColumns(): Promise<CaseImportColumnHelp[]>
+  casesImportPickFile(): Promise<{ name: string; text: string } | null>
+  casesImportScan(text: string): Promise<CaseImportScan>
+  casesImportCommit(): Promise<CaseImportResult>
   listLegacyPayments(): Promise<LegacyEntry[]>
   addLegacyPayment(input: LegacyEntryInput): Promise<LegacyEntry>
   removeLegacyPayment(id: number): Promise<void>

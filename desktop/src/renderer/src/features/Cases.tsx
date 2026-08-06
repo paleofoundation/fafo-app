@@ -557,6 +557,13 @@ function PaymentsCard({
   const [dup, setDup] = useState<DuplicatePaymentMatch | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<number | null>(null)
   const [collecting, setCollecting] = useState<{ id: number; date: string } | null>(null)
+  const [editing, setEditing] = useState<{
+    id: number
+    amount: string
+    date: string
+    received: boolean
+    credit: 'case' | 'JP' | 'Trestle'
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -569,6 +576,7 @@ function PaymentsCard({
     setDup(null)
     setConfirmRemove(null)
     setCollecting(null)
+    setEditing(null)
     setError(null)
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -623,6 +631,33 @@ function PaymentsCard({
     setBusy(false)
   }
 
+  const editCents = editing ? parseAmountCents(editing.amount) : NaN
+  const editValid =
+    editing !== null &&
+    Number.isFinite(editCents) &&
+    editCents > 0 &&
+    /^\d{4}-\d{2}-\d{2}$/.test(editing.date)
+
+  async function saveEdit(): Promise<void> {
+    if (!editing || !editValid) return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.fafo.updateCasePayment(editing.id, {
+        amountCents: editCents,
+        received: editing.received,
+        date: editing.date,
+        resolvedBy: editing.credit === 'case' ? null : editing.credit
+      })
+      setEditing(null)
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
   async function collect(): Promise<void> {
     if (!collecting) return
     setBusy(true)
@@ -659,14 +694,91 @@ function PaymentsCard({
               <span className="deadline-meta"> · {usd(expectedCents)} still expected</span>
             )}
           </p>
-          {rows.map((p) => (
-            // The detail pane is narrow, so let a row wrap onto a second line
-            // rather than pushing its buttons outside the card.
-            <div key={p.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <span className="deadline-date">{p.receivedDate ?? p.dueDate ?? '—'}</span>
-              <span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>
-                {usd(p.amountCents)}
-              </span>
+          {rows.map((p) =>
+            editing?.id === p.id ? (
+              <div key={p.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                <input
+                  type="text"
+                  value={editing.amount}
+                  aria-label="Amount"
+                  onChange={(e) => setEditing({ ...editing, amount: e.target.value })}
+                  style={{ flex: '1 1 110px', minWidth: 90, padding: '5px 8px' }}
+                />
+                <input
+                  type="date"
+                  value={editing.date}
+                  aria-label={editing.received ? 'Date received' : 'Date due'}
+                  onChange={(e) => setEditing({ ...editing, date: e.target.value })}
+                  style={{ padding: '4px 6px', fontSize: 12.5 }}
+                />
+                <select
+                  value={editing.received ? 'received' : 'expected'}
+                  aria-label="Received or expected"
+                  onChange={(e) => setEditing({ ...editing, received: e.target.value === 'received' })}
+                  style={{ padding: '4px 6px', fontSize: 12.5 }}
+                >
+                  <option value="received">Received</option>
+                  <option value="expected">Expected</option>
+                </select>
+                <select
+                  value={editing.credit}
+                  aria-label="Resolution credit"
+                  onChange={(e) =>
+                    setEditing({ ...editing, credit: e.target.value as 'case' | 'JP' | 'Trestle' })
+                  }
+                  style={{ padding: '4px 6px', fontSize: 12.5 }}
+                >
+                  <option value="case">Case credit ({caseResolvedBy ?? 'Unassigned'})</option>
+                  <option value="JP">JP</option>
+                  <option value="Trestle">Trestle</option>
+                </select>
+                <button
+                  className="outline"
+                  disabled={busy || !editValid}
+                  onClick={() => void saveEdit()}
+                >
+                  Save
+                </button>
+                <button className="subtle" onClick={() => setEditing(null)}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              // The detail pane is narrow, so let a row wrap onto a second line
+              // rather than pushing its buttons outside the card.
+              <div key={p.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                <span className="deadline-date">{p.receivedDate ?? p.dueDate ?? '—'}</span>
+                <button
+                  className="linklike"
+                  title="Edit this payment"
+                  onClick={() => {
+                    setConfirmRemove(null)
+                    setCollecting(null)
+                    setEditing({
+                      id: p.id,
+                      amount: (p.amountCents / 100).toFixed(2),
+                      date: p.receivedDate ?? p.dueDate ?? '',
+                      received: p.received,
+                      credit: p.resolvedBy ?? 'case'
+                    })
+                  }}
+                  style={{
+                    flex: 1,
+                    textAlign: 'left',
+                    fontVariantNumeric: 'tabular-nums',
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    font: 'inherit',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    textDecorationStyle: 'dotted',
+                    textUnderlineOffset: 3
+                  }}
+                >
+                  {usd(p.amountCents)}
+                </button>
               <span className={`pill ${p.received ? 'done' : 'open'}`}>
                 {p.received ? 'received' : 'expected'}
               </span>
@@ -744,8 +856,9 @@ function PaymentsCard({
                   </button>
                 </>
               )}
-            </div>
-          ))}
+              </div>
+            )
+          )}
         </>
       )}
 

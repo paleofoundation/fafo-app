@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
 import type {
+  CaseImportColumnHelp,
+  CaseImportResult,
+  CaseImportScan,
+  CaseRowAction,
   LocalCommitResult,
   LocalScanSummary,
   MetricsImportPlanView,
@@ -21,6 +25,231 @@ const ACTION_PILL: Record<string, string> = {
   'already-imported': 'later',
   'duplicate-of-existing': 'later',
   'no-year': 'soon'
+}
+
+const ROW_PILL: Record<CaseRowAction, string> = {
+  create: 'done',
+  duplicate: 'later',
+  error: 'overdue'
+}
+
+/**
+ * Bulk case intake. Paste is the primary path — copying rows out of Excel or
+ * Sheets yields TSV, which the parser handles without a save-as step.
+ */
+function NewCasesImportCard({
+  onChanged
+}: {
+  onChanged: () => Promise<void>
+}): React.JSX.Element {
+  const [columns, setColumns] = useState<CaseImportColumnHelp[]>([])
+  const [showColumns, setShowColumns] = useState(false)
+  const [text, setText] = useState('')
+  const [fileName, setFileName] = useState<string | null>(null)
+  const [scan, setScan] = useState<CaseImportScan | null>(null)
+  const [result, setResult] = useState<CaseImportResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.fafo.casesImportColumns().then(setColumns)
+  }, [])
+
+  async function pick(): Promise<void> {
+    setError(null)
+    try {
+      const picked = await window.fafo.casesImportPickFile()
+      if (!picked) return
+      setFileName(picked.name)
+      setText(picked.text)
+      setScan(null)
+      setResult(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function preview(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setResult(null)
+    try {
+      setScan(await window.fafo.casesImportScan(text))
+    } catch (e) {
+      setScan(null)
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  async function commit(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      setResult(await window.fafo.casesImportCommit())
+      setScan(null)
+      setText('')
+      setFileName(null)
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="card">
+      <h2>New cases — paste a list or choose a CSV</h2>
+      <p className="subtitle">
+        Paste rows straight out of Excel or Google Sheets (include the header row), or pick a
+        .csv/.tsv file. Column names are matched loosely, so &ldquo;Case&rdquo;,
+        &ldquo;Infringer&rdquo; and &ldquo;Brand&rdquo; all mean the matter name. Only
+        <strong> Matter</strong> is required. Rows matching a case already on file are flagged and
+        skipped, and a row carrying a settlement amount records it as received income.{' '}
+        <button
+          className="subtle"
+          style={{ padding: '1px 8px', fontSize: 12 }}
+          onClick={() => setShowColumns(!showColumns)}
+        >
+          {showColumns ? 'Hide columns' : 'Accepted columns'}
+        </button>
+      </p>
+
+      {showColumns && (
+        <table style={{ marginBottom: 12 }}>
+          <tbody>
+            {columns.map((c) => (
+              <tr key={c.field}>
+                <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>
+                  {c.field === 'paidOn' ? 'paid on' : c.field}
+                  {c.required && <span style={{ color: 'var(--danger)' }}> *</span>}
+                </td>
+                <td className="deadline-meta">{c.accepts}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <textarea
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value)
+          setScan(null)
+          setFileName(null)
+        }}
+        placeholder={'Matter\tType\tOpened\tStatus\tAmount\nAcme Foods\tExpired License\t2026-03-01\tResolved\t10,000'}
+        rows={5}
+        style={{
+          width: '100%',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontSize: 12,
+          padding: 8,
+          border: '1px solid var(--line)',
+          borderRadius: 8,
+          resize: 'vertical'
+        }}
+      />
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+        <button className="outline" disabled={busy} onClick={() => void pick()}>
+          Choose file…
+        </button>
+        <button className="outline" disabled={busy || !text.trim()} onClick={() => void preview()}>
+          {busy && !scan ? 'Reading…' : 'Preview'}
+        </button>
+        {scan && scan.totals.create > 0 && (
+          <button
+            className="outline"
+            style={{ borderColor: 'var(--ok)', color: 'var(--ok)' }}
+            disabled={busy}
+            onClick={() => void commit()}
+          >
+            Create {scan.totals.create} case{scan.totals.create === 1 ? '' : 's'}
+          </button>
+        )}
+        {fileName && <span className="deadline-meta">{fileName}</span>}
+      </div>
+
+      {error && <p style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</p>}
+
+      {result && (
+        <p style={{ marginTop: 10 }}>
+          <span className="pill done">imported</span> {result.casesCreated} case
+          {result.casesCreated === 1 ? '' : 's'} created, {result.paymentsRecorded} payment
+          {result.paymentsRecorded === 1 ? '' : 's'} recorded
+          {result.notesAdded > 0 && `, ${result.notesAdded} note${result.notesAdded === 1 ? '' : 's'} added`}
+          {result.skipped > 0 && `, ${result.skipped} row${result.skipped === 1 ? '' : 's'} skipped`}
+          {result.paymentsSkipped > 0 && `, ${result.paymentsSkipped} duplicate payment${result.paymentsSkipped === 1 ? '' : 's'} skipped`}
+          .
+        </p>
+      )}
+
+      {scan && (
+        <div style={{ marginTop: 12 }}>
+          <p>
+            <strong>{scan.totals.rows}</strong> rows · {scan.totals.create} to create ·{' '}
+            {scan.totals.duplicate} already on file · {scan.totals.error} unusable
+            {scan.totals.recoveredCents > 0 &&
+              ` · ${money(scan.totals.recoveredCents)} of income across ${scan.totals.withPayments} payment${scan.totals.withPayments === 1 ? '' : 's'}`}
+          </p>
+          {scan.unrecognized.length > 0 && (
+            <p className="deadline-meta">
+              Ignored columns: {scan.unrecognized.join(', ')}
+            </p>
+          )}
+          <table>
+            <thead>
+              <tr>
+                <th>Matter</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Opened</th>
+                <th>Amount</th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scan.rows.map((r) => (
+                <tr key={r.line}>
+                  <td>
+                    {r.matter || <span className="deadline-meta">(blank, line {r.line})</span>}
+                    {r.licensee !== r.matter && (
+                      <div className="deadline-meta">licensee: {r.licensee}</div>
+                    )}
+                  </td>
+                  <td className="deadline-meta">{r.type}</td>
+                  <td className="deadline-meta">
+                    {r.status}
+                    {r.resolvedBy && ` · ${r.resolvedBy}`}
+                  </td>
+                  <td className="deadline-meta" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {r.openedAt}
+                  </td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {r.amountCents !== null ? money(r.amountCents) : '—'}
+                  </td>
+                  <td>
+                    <span className={`pill ${ROW_PILL[r.action]}`}>
+                      {r.action === 'duplicate' ? 'already on file' : r.action}
+                    </span>
+                    {r.matchedCaseTitle && (
+                      <div className="deadline-meta">matches “{r.matchedCaseTitle}”</div>
+                    )}
+                    {r.messages.map((m, i) => (
+                      <div key={i} className="deadline-meta">
+                        {m}
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function MetricsImportCard({
@@ -354,6 +583,8 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
           {error}
         </div>
       )}
+
+      <NewCasesImportCard onChanged={onChanged} />
 
       <MetricsImportCard onChanged={onChanged} />
 

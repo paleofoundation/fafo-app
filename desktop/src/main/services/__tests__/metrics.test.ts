@@ -11,6 +11,7 @@ import {
   listCasePayments,
   listLegacyPayments,
   markPaymentReceived,
+  updateCasePayment,
   metricsSummary,
   parseSettlementAmountCents,
   policingRecord,
@@ -372,6 +373,65 @@ describe('case payment ledger', () => {
     expect(events[0]!.body).toContain('Removed')
   })
 
+  it('editing a payment corrects the amount, date and credit in the rollups', () => {
+    const before = baseline()
+    const p = addCasePayment(db, caseId, {
+      amountCents: 100_000,
+      received: true,
+      date: '2026-03-01'
+    })
+    // Typo: should have been $9,500 on 2026-04-02, credited to Trestle.
+    updateCasePayment(db, p.id, {
+      amountCents: 950_000,
+      received: true,
+      date: '2026-04-02',
+      resolvedBy: 'Trestle'
+    })
+
+    const m = metricsSummary(db)
+    expect(m.grandTotalCents).toBe(before + 950_000)
+    expect(m.years.find((r) => r.year === 2026)!.byResolver['Trestle']).toBe(950_000)
+
+    const [row] = listCasePayments(db, caseId)
+    expect(row!.amountCents).toBe(950_000)
+    expect(row!.receivedDate).toBe('2026-04-02')
+    expect(row!.resolvedBy).toBe('Trestle')
+    // One timeline entry, corrected — not a second one contradicting the first.
+    const events = getCase(db, caseId)!.events.filter((e) => e.kind === 'payment')
+    expect(events).toHaveLength(1)
+    expect(events[0]!.body).toContain('9,500.00')
+    expect(events[0]!.at).toBe('2026-04-02')
+  })
+
+  it('editing a received payment back to expected clears its collection date', () => {
+    const before = baseline()
+    const p = addCasePayment(db, caseId, {
+      amountCents: 400_000,
+      received: true,
+      date: '2026-06-01'
+    })
+    // Booked in error — the cheque never cleared.
+    updateCasePayment(db, p.id, { amountCents: 400_000, received: false, date: '2026-06-01' })
+
+    expect(metricsSummary(db).grandTotalCents).toBe(before)
+    const [row] = listCasePayments(db, caseId)
+    expect(row!.received).toBe(false)
+    expect(row!.receivedDate).toBeNull()
+    expect(row!.dueDate).toBe('2026-06-01')
+  })
+
+  it('marking an edited installment received keeps the due date it was measured against', () => {
+    const p = addCasePayment(db, caseId, {
+      amountCents: 250_000,
+      received: false,
+      date: '2026-08-15'
+    })
+    updateCasePayment(db, p.id, { amountCents: 250_000, received: true, date: '2026-08-20' })
+    const [row] = listCasePayments(db, caseId)
+    expect(row!.dueDate).toBe('2026-08-15')
+    expect(row!.receivedDate).toBe('2026-08-20')
+  })
+
   it('rejects amounts and dates that would corrupt the rollups', () => {
     expect(() =>
       addCasePayment(db, caseId, { amountCents: 0, received: true, date: '2026-01-01' })
@@ -387,5 +447,8 @@ describe('case payment ledger', () => {
     ).toThrow(/not found/)
     expect(() => markPaymentReceived(db, 999_999, '2026-01-01')).toThrow(/not found/)
     expect(() => removeCasePayment(db, 999_999)).toThrow(/not found/)
+    expect(() =>
+      updateCasePayment(db, 999_999, { amountCents: 1000, received: true, date: '2026-01-01' })
+    ).toThrow(/not found/)
   })
 })

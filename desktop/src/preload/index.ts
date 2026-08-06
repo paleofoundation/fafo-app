@@ -53,11 +53,16 @@ const api: FafoApi = {
   metricsSummary: () => ipcRenderer.invoke('fafo:metricsSummary'),
   listCasePayments: (caseId) => ipcRenderer.invoke('fafo:listCasePayments', caseId),
   addCasePayment: (caseId, input) => ipcRenderer.invoke('fafo:addCasePayment', caseId, input),
+  updateCasePayment: (id, input) => ipcRenderer.invoke('fafo:updateCasePayment', id, input),
   markPaymentReceived: (id, receivedDate) =>
     ipcRenderer.invoke('fafo:markPaymentReceived', id, receivedDate),
   removeCasePayment: (id) => ipcRenderer.invoke('fafo:removeCasePayment', id),
   findDuplicatePayment: (caseId, amountCents, date) =>
     ipcRenderer.invoke('fafo:findDuplicatePayment', caseId, amountCents, date),
+  casesImportColumns: () => ipcRenderer.invoke('fafo:casesImportColumns'),
+  casesImportPickFile: () => ipcRenderer.invoke('fafo:casesImportPickFile'),
+  casesImportScan: (text) => ipcRenderer.invoke('fafo:casesImportScan', text),
+  casesImportCommit: () => ipcRenderer.invoke('fafo:casesImportCommit'),
   listLegacyPayments: () => ipcRenderer.invoke('fafo:listLegacyPayments'),
   addLegacyPayment: (input) => ipcRenderer.invoke('fafo:addLegacyPayment', input),
   removeLegacyPayment: (id) => ipcRenderer.invoke('fafo:removeLegacyPayment', id),

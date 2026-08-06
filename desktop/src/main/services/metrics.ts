@@ -241,6 +241,63 @@ export function addCasePayment(
 }
 
 /**
+ * Correct a payment in place. A mistyped amount or date would otherwise mean
+ * deleting and re-adding, which loses the row's position in the timeline and
+ * risks tripping the duplicate guard on the way back in.
+ *
+ * Switching a received payment back to expected clears the received date —
+ * money that hasn't arrived must not keep a collection date attached to it.
+ * The due date survives being marked received, so an installment keeps the
+ * schedule it was measured against.
+ */
+export function updateCasePayment(
+  db: Database.Database,
+  id: number,
+  input: CasePaymentInput
+): CasePayment {
+  const row = db.prepare('SELECT case_id AS caseId, due_date AS dueDate FROM payments WHERE id = ?').get(id) as
+    | { caseId: number | null; dueDate: string | null }
+    | undefined
+  if (!row) throw new Error(`Payment ${id} not found`)
+  if (!Number.isFinite(input.amountCents) || Math.round(input.amountCents) <= 0)
+    throw new Error('A payment amount must be greater than zero.')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date))
+    throw new Error('A payment needs a date in YYYY-MM-DD form.')
+
+  const cents = Math.round(input.amountCents)
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE payments
+         SET amount_cents = ?, received = ?, received_date = ?, due_date = ?,
+             resolved_by = ?, year = ?
+       WHERE id = ?`
+    ).run(
+      cents,
+      input.received ? 1 : 0,
+      input.received ? input.date : null,
+      input.received ? row.dueDate : input.date,
+      input.resolvedBy ?? null,
+      parseInt(input.date.slice(0, 4), 10),
+      id
+    )
+    if (row.caseId === null) return
+    db.prepare(
+      `UPDATE case_events SET at = ?, body = ?
+       WHERE ref_table = 'payments' AND ref_id = ? AND case_id = ?`
+    ).run(
+      input.date,
+      input.received
+        ? `Payment of ${usd(cents)} received.`
+        : `Payment of ${usd(cents)} expected by ${input.date}.`,
+      id,
+      row.caseId
+    )
+  })()
+
+  return listCasePayments(db, row.caseId!).find((p) => p.id === id)!
+}
+
+/**
  * Flip an expected payment to received. The received date — not the due date —
  * decides which year the income lands in, so it is asked for rather than
  * assumed; a January cheque against a December invoice belongs to January.
