@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   CaseDeletionPreview,
   CaseEvent,
@@ -82,6 +82,8 @@ export function Cases({
   const [sort, setSort] = useState(loadSort)
   const [widths, setWidths] = useState<Record<string, number>>(loadWidths)
   const [filter, setFilter] = useState('')
+  const tableRef = useRef<HTMLTableElement>(null)
+  const [panelWidth, setPanelWidth] = useState<number | null>(null)
 
   const refresh = useCallback(async () => {
     setCases(await window.fafo.listCases())
@@ -98,6 +100,14 @@ export function Cases({
   function widthOf(key: string): number {
     return widths[key] ?? COLUMNS.find((c) => c.key === key)!.defaultWidth
   }
+
+  // The list sits in a grid track, so widening a column would otherwise just
+  // scroll inside a fixed-width panel. Measure what the table actually needs
+  // and size the track to it, so the panel grows as columns are dragged.
+  useLayoutEffect(() => {
+    const el = tableRef.current
+    if (el) setPanelWidth(Math.ceil(el.scrollWidth))
+  }, [widths, filter, cases.length])
 
   function toggleSort(key: SortKey): void {
     setSort((s) =>
@@ -172,13 +182,49 @@ export function Cases({
         />
       )}
 
-      <div className="add-row" style={{ marginBottom: 10 }}>
+      <div className="add-row" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
         <input
           type="text"
           placeholder="Filter cases…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <label
+          className="deadline-meta"
+          style={{ alignSelf: 'center', display: 'flex', gap: 6, alignItems: 'center' }}
+        >
+          Sort by
+          <select
+            value={sort.key}
+            onChange={(e) => setSort((s) => ({ ...s, key: e.target.value as SortKey }))}
+          >
+            {COLUMNS.map((c) => (
+              <option key={c.key} value={c.key}>
+                {c.key === 'title' ? 'Name' : c.key === 'openedAt' ? 'Date opened' : c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <select
+          value={sort.dir}
+          onChange={(e) => setSort((s) => ({ ...s, dir: e.target.value as SortDir }))}
+          title="Sort direction"
+        >
+          <option value="asc">
+            {sort.key === 'openedAt'
+              ? 'Oldest first'
+              : sort.key === 'status'
+                ? 'Open first'
+                : 'A → Z'}
+          </option>
+          <option value="desc">
+            {sort.key === 'openedAt'
+              ? 'Newest first'
+              : sort.key === 'status'
+                ? 'Resolved first'
+                : 'Z → A'}
+          </option>
+        </select>
         <span className="deadline-meta" style={{ alignSelf: 'center' }}>
           {visible.length} of {cases.length}
         </span>
@@ -187,9 +233,23 @@ export function Cases({
         </button>
       </div>
 
-      <div className="split">
-        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-          <table style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+      <div
+        className="split"
+        style={
+          panelWidth
+            ? {
+                // With no case selected there is no detail pane, so don't
+                // reserve a track for it — that would strand empty space and
+                // force a scrollbar the moment a column is widened.
+                gridTemplateColumns:
+                  selectedId === null ? `${panelWidth}px` : `${panelWidth}px minmax(340px, 1fr)`,
+                overflowX: 'auto'
+              }
+            : undefined
+        }
+      >
+        <div className="card" style={{ padding: 0 }}>
+          <table ref={tableRef} style={{ tableLayout: 'fixed', width: 'max-content' }}>
             <thead>
               <tr>
                 {COLUMNS.map((col) => (
