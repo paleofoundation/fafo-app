@@ -380,6 +380,66 @@ export interface DuplicatePaymentMatch {
   sameCase: boolean
 }
 
+/** Agreement facts for a case, from the extracted license record. */
+export interface CaseLicenseFacts {
+  businessName: string | null
+  address: string | null
+  termStart: string | null
+  termEnd: string | null
+  annualFeeCents: number | null
+  revenueBand: string | null
+  vintage: string | null
+  agreementRef: string | null
+  extractionConfidence: number | null
+  liquidatedDamages: { applies: boolean; basis: string }
+  marks: Array<{ code: string; name: string; regNo: string; regStatus: string }>
+}
+
+/** A document attached to a case, referenced in place on disk. */
+export interface CaseFile {
+  id: number
+  fileName: string
+  path: string | null
+  byteSize: number | null
+  mtime: string | null
+  kind: string
+  datedAt: string | null
+  source: string
+  present: boolean
+}
+
+export interface CaseFiles {
+  folderPath: string | null
+  folderExists: boolean
+  files: CaseFile[]
+  byKind: Array<{ kind: string; count: number }>
+  missing: number
+}
+
+export interface FolderRefresh {
+  caseId: number
+  caseTitle: string
+  folderPath: string
+  filesSeen: number
+  filesAdded: number
+  missing: number
+  newestFileAt: string | null
+  addedByKind: Record<string, number>
+  flags: string[]
+}
+
+export interface RefreshAllResult {
+  cases: FolderRefresh[]
+  totals: {
+    casesChecked: number
+    casesChanged: number
+    filesAdded: number
+    missing: number
+    unlinkedCases: number
+    unreadableFolders: number
+  }
+}
+
 /** Bulk case intake from a pasted spreadsheet or CSV/TSV file. */
 export type CaseImportField =
   | 'matter'
@@ -637,6 +697,13 @@ export interface FafoApi {
     amountCents: number,
     date: string
   ): Promise<DuplicatePaymentMatch | null>
+  caseLicenseFacts(caseId: number): Promise<CaseLicenseFacts | null>
+  listCaseFiles(caseId: number): Promise<CaseFiles>
+  refreshCaseFiles(caseId: number): Promise<FolderRefresh>
+  refreshAllCaseFiles(): Promise<RefreshAllResult>
+  pickCaseFolder(caseId: number): Promise<string | null>
+  revealFile(evidenceId: number): Promise<void>
+  openFile(evidenceId: number): Promise<void>
   casesImportColumns(): Promise<CaseImportColumnHelp[]>
   casesImportPickFile(): Promise<{ name: string; text: string } | null>
   casesImportScan(text: string): Promise<CaseImportScan>

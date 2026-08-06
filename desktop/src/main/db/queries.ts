@@ -340,3 +340,65 @@ export function overdueDeadlines(db: Database.Database, todayIso: string): Deadl
     )
     .all(todayIso) as Deadline[]
 }
+
+/**
+ * The agreement facts a matter turns on, pulled from the extracted license:
+ * who the licensee legally is, where they are, what they paid, when the term
+ * ran, and what the liquidated-damages clause measures.
+ *
+ * The LD figure is stated as its BASIS, not a number. Under the 2025 template
+ * (§E.3.d.ii) it is one year's license fee per month of continued misuse, so
+ * the amount depends on how long the misuse ran — that is the settlement
+ * calculator's job. Printing a single figure here would be a guess with a
+ * dollar sign in front of it.
+ */
+export interface CaseLicenseFacts {
+  businessName: string | null
+  address: string | null
+  termStart: string | null
+  termEnd: string | null
+  annualFeeCents: number | null
+  revenueBand: string | null
+  vintage: string | null
+  agreementRef: string | null
+  extractionConfidence: number | null
+  liquidatedDamages: { applies: boolean; basis: string }
+  marks: Array<{ code: string; name: string; regNo: string; regStatus: string }>
+}
+
+export function caseLicenseFacts(db: Database.Database, caseId: number): CaseLicenseFacts | null {
+  const lic = db
+    .prepare(
+      `SELECT li.term_start AS termStart, li.term_end AS termEnd, li.vintage,
+              li.annual_fee_cents AS annualFeeCents, li.revenue_band AS revenueBand,
+              li.extraction_confidence AS extractionConfidence, li.agreement_ref AS agreementRef,
+              l.name AS businessName, l.address
+       FROM cases c JOIN licenses li ON li.licensee_id = c.licensee_id
+       JOIN licensees l ON l.id = li.licensee_id
+       WHERE c.id = ? ORDER BY li.term_end IS NULL, li.term_end DESC LIMIT 1`
+    )
+    .get(caseId) as Omit<CaseLicenseFacts, 'liquidatedDamages' | 'marks'> | undefined
+  if (!lic) return null
+
+  const marks = db
+    .prepare(
+      `SELECT DISTINCT m.code, m.name, m.uspto_reg_no AS regNo, m.reg_status AS regStatus
+       FROM cases c JOIN licenses li ON li.licensee_id = c.licensee_id
+       JOIN license_marks lm ON lm.license_id = li.id
+       JOIN marks m ON m.id = lm.mark_id WHERE c.id = ?`
+    )
+    .all(caseId) as CaseLicenseFacts['marks']
+
+  const fee = lic.annualFeeCents
+  const applies = lic.vintage === '2025'
+  return {
+    ...lic,
+    marks,
+    liquidatedDamages: {
+      applies,
+      basis: applies
+        ? `§E.3.d.ii — one year's license fee${fee ? ` ($${(fee / 100).toLocaleString()})` : ''} per month of continued use after termination.`
+        : `No liquidated-damages clause in the ${lic.vintage ?? 'this'} agreement. Recovery is measured on the legacy basis: current fee schedule × years of use.`
+    }
+  }
+}

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type {
   CaseDeletionPreview,
   CaseEvent,
+  CaseFiles,
+  CaseLicenseFacts,
   CasePayment,
   CaseRow,
   CaseStatus,
@@ -482,6 +484,10 @@ function CaseDetail({
         </div>
       </div>
 
+      <LicenseCard caseId={id} />
+
+      <FilesCard caseId={id} onChanged={load} />
+
       <PaymentsCard
         caseId={id}
         caseResolvedBy={c.resolvedBy ?? null}
@@ -524,6 +530,293 @@ function CaseDetail({
 }
 
 const money = (n: number): string => `$${Math.round(n).toLocaleString()}`
+
+/**
+ * The agreement facts a matter turns on, read from the extracted license.
+ *
+ * Liquidated damages appear as their BASIS rather than a figure: under
+ * §E.3.d.ii the measure is one year's fee per month of continued use, so the
+ * number depends on how long the misuse ran. The settlement calculator below
+ * turns it into money once you give it an observed-use-through date.
+ */
+function LicenseCard({ caseId }: { caseId: number }): React.JSX.Element | null {
+  const [facts, setFacts] = useState<CaseLicenseFacts | null | undefined>(undefined)
+
+  useEffect(() => {
+    let live = true
+    void window.fafo.caseLicenseFacts(caseId).then((f) => {
+      if (live) setFacts(f)
+    })
+    return () => {
+      live = false
+    }
+  }, [caseId])
+
+  if (facts === undefined) return null
+  if (facts === null) {
+    return (
+      <div className="card">
+        <h2>License agreement</h2>
+        <div className="empty">
+          No agreement on file for this licensee — nothing extracted yet. Run the SignNow sync and
+          agreement extraction from Import, or check that the case is linked to the right licensee.
+        </div>
+      </div>
+    )
+  }
+
+  const rows: Array<[string, React.ReactNode]> = [
+    ['Business name', facts.businessName ?? '—'],
+    ['Address', facts.address ?? <span className="deadline-meta">not extracted</span>],
+    [
+      'Term',
+      facts.termStart || facts.termEnd ? (
+        <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {facts.termStart ?? '?'} → {facts.termEnd ?? '?'}
+        </span>
+      ) : (
+        <span className="deadline-meta">not extracted</span>
+      )
+    ],
+    [
+      'License fee',
+      facts.annualFeeCents !== null ? (
+        <>
+          {usd(facts.annualFeeCents)}/yr
+          {facts.revenueBand && <span className="deadline-meta"> · band {facts.revenueBand}</span>}
+        </>
+      ) : (
+        <span className="deadline-meta">not extracted</span>
+      )
+    ],
+    ['Liquidated damages', <span style={{ fontSize: 12.5 }}>{facts.liquidatedDamages.basis}</span>]
+  ]
+
+  return (
+    <div className="card">
+      <h2>License agreement</h2>
+      {rows.map(([label, value]) => (
+        <div key={label} className="field-row">
+          <span className="field-label">{label}</span>
+          <span style={{ flex: 1 }}>{value}</span>
+        </div>
+      ))}
+      {facts.marks.length > 0 && (
+        <div className="field-row">
+          <span className="field-label">Marks licensed</span>
+          <span style={{ flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {facts.marks.map((m) => (
+              <span key={m.code} className="pill mark" title={`Reg. ${m.regNo} (${m.regStatus})`}>
+                {m.code}
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
+      <p className="deadline-meta" style={{ margin: '4px 0 0' }}>
+        {facts.vintage ? `${facts.vintage} template` : 'vintage unknown'}
+        {facts.agreementRef && ` · ${facts.agreementRef}`}
+        {facts.extractionConfidence !== null &&
+          ` · extraction confidence ${Math.round(facts.extractionConfidence * 100)}%`}
+      </p>
+    </div>
+  )
+}
+
+function fileSize(bytes: number | null): string {
+  if (bytes === null) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** Drop the archive root so the folder reads as "Certified:Expired/Awake Chocolate". */
+const shortFolder = (p: string): string => p.split('/').slice(-2).join('/')
+
+const FILE_LIMIT = 12
+
+/**
+ * The documents on a case, referenced in place in the LEGAL archive — nothing
+ * is copied. "Refresh from folder" re-reads the folder and picks up whatever
+ * has been added since, which is the working loop for a live matter: drop the
+ * new screenshots or the countersigned agreement in, then refresh.
+ *
+ * Files that vanished from disk are reported, never unlinked — a moved folder
+ * shouldn't quietly shrink the evidence record behind a case.
+ */
+function FilesCard({
+  caseId,
+  onChanged
+}: {
+  caseId: number
+  onChanged: () => Promise<void>
+}): React.JSX.Element {
+  const [data, setData] = useState<CaseFiles | null>(null)
+  const [showAll, setShowAll] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setData(await window.fafo.listCaseFiles(caseId))
+  }, [caseId])
+
+  useEffect(() => {
+    setShowAll(false)
+    setNote(null)
+    setError(null)
+    void load()
+  }, [load])
+
+  async function refresh(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setNote(null)
+    try {
+      const r = await window.fafo.refreshCaseFiles(caseId)
+      const kinds = Object.entries(r.addedByKind)
+        .map(([k, n]) => `${n} ${k}${n === 1 ? '' : 's'}`)
+        .join(', ')
+      setNote(
+        r.filesAdded === 0
+          ? `Nothing new — ${r.filesSeen} file${r.filesSeen === 1 ? '' : 's'} in the folder, all already indexed.`
+          : `Added ${r.filesAdded} new file${r.filesAdded === 1 ? '' : 's'} (${kinds}).`
+      )
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  async function link(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      const dir = await window.fafo.pickCaseFolder(caseId)
+      if (dir) {
+        await load()
+        await onChanged()
+        await refresh()
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  async function act(kind: 'reveal' | 'open', id: number): Promise<void> {
+    setError(null)
+    try {
+      if (kind === 'reveal') await window.fafo.revealFile(id)
+      else await window.fafo.openFile(id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  if (!data) return <div className="card empty">Loading files…</div>
+
+  const shown = showAll ? data.files : data.files.slice(0, FILE_LIMIT)
+
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+        <h2 style={{ margin: 0 }}>Files</h2>
+        {data.folderPath ? (
+          <button className="subtle" disabled={busy} onClick={() => void refresh()}>
+            {busy ? 'Reading…' : 'Refresh from folder'}
+          </button>
+        ) : (
+          <button className="subtle" disabled={busy} onClick={() => void link()}>
+            Link folder…
+          </button>
+        )}
+      </div>
+
+      {data.folderPath && (
+        <p className="deadline-meta" style={{ margin: '6px 0 0', wordBreak: 'break-all' }}>
+          {shortFolder(data.folderPath)}
+          {!data.folderExists && (
+            <span style={{ color: 'var(--danger)' }}> — folder not found on disk</span>
+          )}
+        </p>
+      )}
+      {!data.folderPath && (
+        <p className="subtitle" style={{ margin: '6px 0 0' }}>
+          No folder linked yet, so nothing can be pulled in automatically. Link the case&rsquo;s
+          folder under LEGAL/Infringement Cases.
+        </p>
+      )}
+
+      {data.byKind.length > 0 && (
+        <p style={{ margin: '8px 0 4px', fontSize: 13 }}>
+          {data.byKind.map((k, i) => (
+            <span key={k.kind}>
+              {i > 0 && ' · '}
+              <strong>{k.count}</strong> {k.kind}
+              {k.count === 1 ? '' : 's'}
+            </span>
+          ))}
+        </p>
+      )}
+
+      {note && <p className="deadline-meta" style={{ margin: '6px 0' }}>{note}</p>}
+      {error && <p style={{ color: 'var(--danger)', margin: '6px 0', fontSize: 12.5 }}>{error}</p>}
+
+      {data.files.length === 0 && (
+        <div className="empty">No files indexed for this case yet.</div>
+      )}
+
+      {shown.map((f) => (
+        <div key={f.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <span className="deadline-date" style={{ minWidth: 84, fontSize: 12.5 }}>
+            {f.datedAt ?? f.mtime?.slice(0, 10) ?? '—'}
+          </span>
+          <span
+            style={{ flex: 1, minWidth: 140, wordBreak: 'break-word' }}
+            title={f.path ?? undefined}
+          >
+            {f.fileName}
+          </span>
+          <span className="deadline-meta" style={{ whiteSpace: 'nowrap' }}>
+            {f.kind} · {fileSize(f.byteSize)}
+          </span>
+          {f.present ? (
+            <>
+              <button className="subtle" onClick={() => void act('open', f.id)}>
+                Open
+              </button>
+              <button className="subtle" onClick={() => void act('reveal', f.id)}>
+                Reveal
+              </button>
+            </>
+          ) : (
+            <span className="pill overdue">missing</span>
+          )}
+        </div>
+      ))}
+
+      {data.files.length > FILE_LIMIT && (
+        <button
+          className="subtle"
+          style={{ marginTop: 10 }}
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? `Show fewer` : `Show all ${data.files.length}`}
+        </button>
+      )}
+
+      {data.missing > 0 && (
+        <p className="subtitle" style={{ margin: '10px 0 0' }}>
+          {data.missing} indexed file{data.missing === 1 ? '' : 's'} no longer on disk. The
+          reference is kept rather than deleted — usually the folder moved.
+        </p>
+      )}
+    </div>
+  )
+}
 
 const usd = (cents: number): string =>
   `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

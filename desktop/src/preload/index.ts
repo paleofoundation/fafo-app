@@ -59,6 +59,13 @@ const api: FafoApi = {
   removeCasePayment: (id) => ipcRenderer.invoke('fafo:removeCasePayment', id),
   findDuplicatePayment: (caseId, amountCents, date) =>
     ipcRenderer.invoke('fafo:findDuplicatePayment', caseId, amountCents, date),
+  caseLicenseFacts: (caseId) => ipcRenderer.invoke('fafo:caseLicenseFacts', caseId),
+  listCaseFiles: (caseId) => ipcRenderer.invoke('fafo:listCaseFiles', caseId),
+  refreshCaseFiles: (caseId) => ipcRenderer.invoke('fafo:refreshCaseFiles', caseId),
+  refreshAllCaseFiles: () => ipcRenderer.invoke('fafo:refreshAllCaseFiles'),
+  pickCaseFolder: (caseId) => ipcRenderer.invoke('fafo:pickCaseFolder', caseId),
+  revealFile: (evidenceId) => ipcRenderer.invoke('fafo:revealFile', evidenceId),
+  openFile: (evidenceId) => ipcRenderer.invoke('fafo:openFile', evidenceId),
   casesImportColumns: () => ipcRenderer.invoke('fafo:casesImportColumns'),
   casesImportPickFile: () => ipcRenderer.invoke('fafo:casesImportPickFile'),
   casesImportScan: (text) => ipcRenderer.invoke('fafo:casesImportScan', text),

@@ -5,6 +5,7 @@ import type {
   CaseImportScan,
   CaseRowAction,
   LocalCommitResult,
+  RefreshAllResult,
   LocalScanSummary,
   MetricsImportPlanView,
   MetricsImportResult,
@@ -499,6 +500,8 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
   const [snapBusy, setSnapBusy] = useState(false)
   const [scan, setScan] = useState<LocalScanSummary | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
+  const [refresh, setRefresh] = useState<RefreshAllResult | null>(null)
+  const [refreshBusy, setRefreshBusy] = useState(false)
   const [commit, setCommit] = useState<LocalCommitResult | null>(null)
   const [sheets, setSheets] = useState<SheetsScanView | null>(null)
   const [sheetsBusy, setSheetsBusy] = useState(false)
@@ -519,6 +522,20 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
       setError(e instanceof Error ? e.message : String(e))
     }
     setSnapBusy(false)
+  }
+
+  async function runRefresh(): Promise<void> {
+    setRefreshBusy(true)
+    setError(null)
+    setRefresh(null)
+    try {
+      const r = await window.fafo.refreshAllCaseFiles()
+      setRefresh(r)
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setRefreshBusy(false)
   }
 
   async function runScan(): Promise<void> {
@@ -708,10 +725,22 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
           References the 14 GB evidence tree in place — nothing is copied or moved. Historical
           cases enter as Resolved (review any that are still live); folders matching existing
           licensees link to their current case instead of duplicating.
+          <br />
+          <strong>Refresh</strong> re-reads every folder already linked to a case and picks up
+          whatever has been added since — new screenshots, email threads, a countersigned
+          agreement. Safe to run any time; it only ever adds.
         </p>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="outline"
+            style={{ borderColor: 'var(--ok)', color: 'var(--ok)' }}
+            disabled={refreshBusy}
+            onClick={() => void runRefresh()}
+          >
+            {refreshBusy ? 'Reading folders…' : 'Refresh from local folders'}
+          </button>
           <button className="outline" disabled={scanBusy} onClick={() => void runScan()}>
-            {scanBusy && !scan ? 'Scanning…' : 'Scan (dry run)'}
+            {scanBusy && !scan ? 'Scan for new cases (dry run)' : 'Scan for new cases (dry run)'}
           </button>
           {scan && (
             <button
@@ -724,6 +753,42 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
             </button>
           )}
         </div>
+
+        {refresh && (
+          <div style={{ marginTop: 10 }}>
+            <p>
+              <span className="pill done">refreshed</span> {refresh.totals.casesChecked} linked
+              folders checked ·{' '}
+              <strong>
+                {refresh.totals.filesAdded} new file
+                {refresh.totals.filesAdded === 1 ? '' : 's'}
+              </strong>{' '}
+              across {refresh.totals.casesChanged} case
+              {refresh.totals.casesChanged === 1 ? '' : 's'}
+              {refresh.totals.unlinkedCases > 0 &&
+                ` · ${refresh.totals.unlinkedCases} case${refresh.totals.unlinkedCases === 1 ? '' : 's'} have no folder linked`}
+              {refresh.totals.unreadableFolders > 0 &&
+                ` · ${refresh.totals.unreadableFolders} folder${refresh.totals.unreadableFolders === 1 ? '' : 's'} unreadable`}
+              {refresh.totals.missing > 0 &&
+                ` · ${refresh.totals.missing} indexed file${refresh.totals.missing === 1 ? '' : 's'} no longer on disk`}
+            </p>
+            {refresh.cases.length === 0 && (
+              <p className="deadline-meta">Everything already indexed — nothing new to pull in.</p>
+            )}
+            {refresh.cases.map((c) => (
+              <div key={c.caseId} className="deadline-row">
+                <span className="deadline-title">{c.caseTitle}</span>
+                <span className="deadline-meta">
+                  {c.filesAdded > 0 &&
+                    `+${c.filesAdded} (${Object.entries(c.addedByKind)
+                      .map(([k, n]) => `${n} ${k}${n === 1 ? '' : 's'}`)
+                      .join(', ')})`}
+                  {c.missing > 0 && `${c.filesAdded > 0 ? ' · ' : ''}${c.missing} missing`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {commit && (
           <p style={{ marginTop: 10 }}>

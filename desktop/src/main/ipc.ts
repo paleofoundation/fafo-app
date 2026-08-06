@@ -1,11 +1,17 @@
-import { BrowserWindow, app, dialog, ipcMain } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import fs from 'node:fs'
 import { openDb } from './db'
 import * as q from './db/queries'
 import { msSignIn, msSignOut, msStatus } from './services/msgraph'
 import {
   commitLocalCases,
+  DEFAULT_CASES_ROOT,
+  evidencePath,
+  listCaseFiles,
+  refreshAllCaseFiles,
+  refreshCaseFiles,
   scanLocalCases,
+  setCaseFolder,
   type LocalScanReport
 } from './services/ingest/localCases'
 import {
@@ -287,6 +293,31 @@ export function registerIpc(): void {
     (_e, caseId: number, amountCents: number, date: string) =>
       findDuplicatePayment(db, caseId, amountCents, date)
   )
+  ipcMain.handle('fafo:caseLicenseFacts', (_e, caseId: number) => q.caseLicenseFacts(db, caseId))
+  ipcMain.handle('fafo:listCaseFiles', (_e, caseId: number) => listCaseFiles(db, caseId))
+  ipcMain.handle('fafo:refreshCaseFiles', (_e, caseId: number) => refreshCaseFiles(db, caseId))
+  ipcMain.handle('fafo:refreshAllCaseFiles', () => refreshAllCaseFiles(db))
+  ipcMain.handle('fafo:pickCaseFolder', async (_e, caseId: number) => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Choose this case\u2019s folder',
+      defaultPath: DEFAULT_CASES_ROOT,
+      properties: ['openDirectory']
+    })
+    const dir = picked.filePaths[0]
+    if (picked.canceled || !dir) return null
+    setCaseFolder(db, caseId, dir)
+    return dir
+  })
+  // The renderer passes an evidence id, never a path \u2014 main resolves it from
+  // the database so nothing in the UI can ask the shell to open an arbitrary file.
+  ipcMain.handle('fafo:revealFile', (_e, evidenceId: number) => {
+    shell.showItemInFolder(evidencePath(db, evidenceId))
+  })
+  ipcMain.handle('fafo:openFile', async (_e, evidenceId: number) => {
+    const err = await shell.openPath(evidencePath(db, evidenceId))
+    if (err) throw new Error(err)
+  })
+
   let lastCaseImport: CaseImportScan | null = null
   ipcMain.handle('fafo:casesImportColumns', () => CASE_IMPORT_COLUMN_HELP)
   ipcMain.handle('fafo:casesImportPickFile', async () => {

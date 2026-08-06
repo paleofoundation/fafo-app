@@ -27,8 +27,14 @@ export const DEFAULT_CASES_ROOT =
 
 const BUCKETS: ReadonlyArray<{ dir: string; caseType: string }> = [
   { dir: 'Certified:Expired', caseType: 'Expired License' },
-  { dir: 'Not Certified', caseType: 'Unlicensed Use - Never Certified' }
+  { dir: 'Not Certified', caseType: 'Unlicensed Use - Never Certified' },
+  // Everything else filed at this level is a matter too — the bucket just
+  // doesn't say whether they were ever certified, so the type stays generic.
+  { dir: 'Misc. Cases', caseType: 'Unlicensed Use' }
 ]
+
+/** Buckets are the folders we descend INTO; anything else at the root is a case folder in its own right. */
+const BUCKET_DIRS = new Set(BUCKETS.map((b) => b.dir))
 
 /** Folders that are counsel/correspondence organization, not evidence sessions. */
 const KNOWN_SUBFOLDERS = /^(emails?|email correspondence|trestle|legal|litigation docs?|settlement|termination|c&d.*)$/i
@@ -154,6 +160,44 @@ function walkCaseFolder(folderPath: string): {
   }
 }
 
+/**
+ * Every folder under the root that represents a matter: the contents of each
+ * known bucket, plus any folder sitting loose at the root (e.g. "erewhon",
+ * "Thrive Market"), which would otherwise never be seen.
+ */
+function caseFolderCandidates(
+  root: string
+): Array<{ folderPath: string; folderName: string; bucket: string; caseType: string }> {
+  const out: Array<{ folderPath: string; folderName: string; bucket: string; caseType: string }> = []
+
+  for (const bucket of BUCKETS) {
+    const bucketPath = path.join(root, bucket.dir)
+    if (!fs.existsSync(bucketPath)) continue
+    for (const entry of fs.readdirSync(bucketPath, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      out.push({
+        folderPath: path.join(bucketPath, entry.name),
+        folderName: entry.name,
+        bucket: bucket.dir,
+        caseType: bucket.caseType
+      })
+    }
+  }
+
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    if (BUCKET_DIRS.has(entry.name)) continue
+    out.push({
+      folderPath: path.join(root, entry.name),
+      folderName: entry.name,
+      bucket: '(root)',
+      caseType: 'Unlicensed Use'
+    })
+  }
+
+  return out
+}
+
 export function scanLocalCases(db: Database.Database, root = DEFAULT_CASES_ROOT): LocalScanReport {
   if (!fs.existsSync(root)) {
     throw new Error(`Infringement Cases root not found: ${root}`)
@@ -166,13 +210,10 @@ export function scanLocalCases(db: Database.Database, root = DEFAULT_CASES_ROOT)
 
   const folders: ScannedCaseFolder[] = []
 
-  for (const bucket of BUCKETS) {
-    const bucketPath = path.join(root, bucket.dir)
-    if (!fs.existsSync(bucketPath)) continue
-    for (const entry of fs.readdirSync(bucketPath, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
-      const folderPath = path.join(bucketPath, entry.name)
-      const { primaryName, relatedEntity } = parseCaseFolderName(entry.name)
+  for (const bucket of caseFolderCandidates(root)) {
+    {
+      const folderPath = bucket.folderPath
+      const { primaryName, relatedEntity } = parseCaseFolderName(bucket.folderName)
       const match = findLicenseeByName(db, primaryName)
       const existingCase = match
         ? ((findCaseByLicensee.get(match.id) as { id: number } | undefined) ?? null)
@@ -185,8 +226,8 @@ export function scanLocalCases(db: Database.Database, root = DEFAULT_CASES_ROOT)
 
       folders.push({
         folderPath,
-        folderName: entry.name,
-        bucket: bucket.dir,
+        folderName: bucket.folderName,
+        bucket: bucket.bucket,
         caseType: bucket.caseType,
         primaryName,
         relatedEntity,
@@ -331,4 +372,238 @@ export function commitLocalCases(db: Database.Database, report: LocalScanReport)
   })
   tx()
   return result
+}
+
+/**
+ * Re-read a case's folder and pick up anything new.
+ *
+ * The original import deliberately skips folders it has already seen, which
+ * makes it useless once a matter is live: dropping a new screenshot, email
+ * thread or countersigned agreement into the folder produced nothing. This is
+ * the repeatable path — safe to run any number of times, because
+ * evidence_files.path is uniquely indexed and inserts are OR IGNORE.
+ *
+ * Files that have disappeared are REPORTED, never deleted. A missing file is
+ * usually a folder someone moved, and silently dropping the reference would
+ * quietly shrink the evidence record behind a case.
+ */
+export interface FolderRefresh {
+  caseId: number
+  caseTitle: string
+  folderPath: string
+  filesSeen: number
+  filesAdded: number
+  /** Indexed files whose path no longer resolves on disk. */
+  missing: number
+  newestFileAt: string | null
+  addedByKind: Record<string, number>
+  flags: string[]
+}
+
+export function refreshCaseFiles(db: Database.Database, caseId: number): FolderRefresh {
+  const row = db
+    .prepare('SELECT id, title, local_folder_path AS folderPath FROM cases WHERE id = ?')
+    .get(caseId) as { id: number; title: string; folderPath: string | null } | undefined
+  if (!row) throw new Error(`Case ${caseId} not found`)
+  if (!row.folderPath)
+    throw new Error(
+      `"${row.title}" has no local folder linked yet. Link one first, then refresh.`
+    )
+  if (!fs.existsSync(row.folderPath))
+    throw new Error(`Folder no longer exists: ${row.folderPath}`)
+
+  const walked = walkCaseFolder(row.folderPath)
+  const insertEvidence = db.prepare(
+    `INSERT OR IGNORE INTO evidence_files (case_id, path, byte_size, mtime, kind, dated_at, source)
+     VALUES (?, ?, ?, ?, ?, ?, 'local_refresh')`
+  )
+
+  const addedByKind: Record<string, number> = {}
+  let filesAdded = 0
+  let newestFileAt: string | null = null
+
+  db.transaction(() => {
+    for (const file of walked.files) {
+      const r = insertEvidence.run(
+        caseId,
+        file.path,
+        file.size,
+        file.mtime,
+        file.kind,
+        file.datedAt
+      )
+      if (r.changes === 1) {
+        filesAdded += 1
+        addedByKind[file.kind] = (addedByKind[file.kind] ?? 0) + 1
+        if (!newestFileAt || file.mtime > newestFileAt) newestFileAt = file.mtime
+      }
+    }
+    if (filesAdded > 0) {
+      const summary = Object.entries(addedByKind)
+        .map(([kind, n]) => `${n} ${kind}${n === 1 ? '' : 's'}`)
+        .join(', ')
+      db.prepare(
+        "INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'evidence', ?)"
+      ).run(
+        caseId,
+        new Date().toISOString().slice(0, 10),
+        `Picked up ${filesAdded} new file${filesAdded === 1 ? '' : 's'} from the case folder (${summary}).`
+      )
+    }
+  })()
+
+  const onDisk = new Set(walked.files.map((f) => f.path))
+  const indexed = db
+    .prepare('SELECT path FROM evidence_files WHERE case_id = ? AND path IS NOT NULL')
+    .all(caseId) as Array<{ path: string }>
+  const missing = indexed.filter((e) => !onDisk.has(e.path)).length
+
+  return {
+    caseId,
+    caseTitle: row.title,
+    folderPath: row.folderPath,
+    filesSeen: walked.files.length,
+    filesAdded,
+    missing,
+    newestFileAt,
+    addedByKind,
+    flags: walked.flags
+  }
+}
+
+export interface RefreshAllResult {
+  cases: FolderRefresh[]
+  totals: {
+    casesChecked: number
+    casesChanged: number
+    filesAdded: number
+    missing: number
+    unlinkedCases: number
+    unreadableFolders: number
+  }
+}
+
+/** Refresh every case that has a folder linked. Only changed cases are returned. */
+export function refreshAllCaseFiles(db: Database.Database): RefreshAllResult {
+  const linked = db
+    .prepare(
+      'SELECT id FROM cases WHERE local_folder_path IS NOT NULL ORDER BY status != \'Resolved\' DESC, title'
+    )
+    .all() as Array<{ id: number }>
+  const unlinked = (
+    db.prepare('SELECT COUNT(*) AS n FROM cases WHERE local_folder_path IS NULL').get() as {
+      n: number
+    }
+  ).n
+
+  const cases: FolderRefresh[] = []
+  let filesAdded = 0
+  let missing = 0
+  let unreadable = 0
+
+  for (const { id } of linked) {
+    try {
+      const r = refreshCaseFiles(db, id)
+      filesAdded += r.filesAdded
+      missing += r.missing
+      if (r.filesAdded > 0 || r.missing > 0) cases.push(r)
+    } catch {
+      // A folder that has moved shouldn't abort the sweep over the other 160.
+      unreadable += 1
+    }
+  }
+
+  return {
+    cases,
+    totals: {
+      casesChecked: linked.length,
+      casesChanged: cases.filter((c) => c.filesAdded > 0).length,
+      filesAdded,
+      missing,
+      unlinkedCases: unlinked,
+      unreadableFolders: unreadable
+    }
+  }
+}
+
+/** Point a case at a folder so it can be refreshed. Used for matters the archive scan never matched. */
+export function setCaseFolder(db: Database.Database, caseId: number, folderPath: string): void {
+  if (!fs.existsSync(folderPath)) throw new Error(`Folder not found: ${folderPath}`)
+  const taken = db
+    .prepare('SELECT title FROM cases WHERE local_folder_path = ? AND id != ?')
+    .get(folderPath, caseId) as { title: string } | undefined
+  if (taken) throw new Error(`That folder is already linked to "${taken.title}".`)
+  const r = db.prepare('UPDATE cases SET local_folder_path = ? WHERE id = ?').run(folderPath, caseId)
+  if (r.changes === 0) throw new Error(`Case ${caseId} not found`)
+  db.prepare("INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'import', ?)").run(
+    caseId,
+    new Date().toISOString().slice(0, 10),
+    `Linked local folder: ${folderPath}`
+  )
+}
+
+export interface CaseFile {
+  id: number
+  fileName: string
+  path: string | null
+  byteSize: number | null
+  mtime: string | null
+  kind: string
+  datedAt: string | null
+  source: string
+  /** False when the row points at a file that is no longer on disk. */
+  present: boolean
+}
+
+export interface CaseFiles {
+  folderPath: string | null
+  folderExists: boolean
+  files: CaseFile[]
+  byKind: Array<{ kind: string; count: number }>
+  missing: number
+}
+
+/** The documents attached to a case, newest first, with on-disk presence resolved. */
+export function listCaseFiles(db: Database.Database, caseId: number): CaseFiles {
+  const c = db.prepare('SELECT local_folder_path AS folderPath FROM cases WHERE id = ?').get(caseId) as
+    | { folderPath: string | null }
+    | undefined
+  if (!c) throw new Error(`Case ${caseId} not found`)
+
+  const rows = db
+    .prepare(
+      `SELECT id, path, byte_size AS byteSize, mtime, kind, dated_at AS datedAt, source
+       FROM evidence_files WHERE case_id = ?
+       ORDER BY COALESCE(dated_at, mtime) DESC, id DESC`
+    )
+    .all(caseId) as Array<Omit<CaseFile, 'fileName' | 'present'>>
+
+  const files: CaseFile[] = rows.map((r) => ({
+    ...r,
+    fileName: r.path ? path.basename(r.path) : '(no path)',
+    present: r.path ? fs.existsSync(r.path) : false
+  }))
+
+  const counts = new Map<string, number>()
+  for (const f of files) counts.set(f.kind, (counts.get(f.kind) ?? 0) + 1)
+
+  return {
+    folderPath: c.folderPath,
+    folderExists: c.folderPath ? fs.existsSync(c.folderPath) : false,
+    files,
+    byKind: [...counts.entries()]
+      .map(([kind, count]) => ({ kind, count }))
+      .sort((a, b) => b.count - a.count),
+    missing: files.filter((f) => !f.present).length
+  }
+}
+
+/** Resolve an evidence row to its path. The renderer never passes a raw path to the shell. */
+export function evidencePath(db: Database.Database, evidenceId: number): string {
+  const row = db.prepare('SELECT path FROM evidence_files WHERE id = ?').get(evidenceId) as
+    | { path: string | null }
+    | undefined
+  if (!row?.path) throw new Error(`Evidence ${evidenceId} has no local path`)
+  if (!fs.existsSync(row.path)) throw new Error(`File no longer exists: ${row.path}`)
+  return row.path
 }
