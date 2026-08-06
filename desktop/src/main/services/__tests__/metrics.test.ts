@@ -3,18 +3,23 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from '../../db/migrations'
 import { seedIfEmpty } from '../../db/seed'
 import {
+  addCasePayment,
   addLegacyPayment,
   brandFeed,
   confirmSettlementPayment,
+  findDuplicatePayment,
+  listCasePayments,
   listLegacyPayments,
+  markPaymentReceived,
   metricsSummary,
   parseSettlementAmountCents,
   policingRecord,
   policingRecordMarkdown,
+  removeCasePayment,
   removeLegacyPayment,
   unrecordedSettlements
 } from '../metrics'
-import { createCase } from '../../db/queries'
+import { createCase, getCase } from '../../db/queries'
 
 describe('metrics summary', () => {
   let db: Database.Database
@@ -232,5 +237,155 @@ describe('brand feed', () => {
     expect(hc.status).toBe('expired') // seeded license status is 'expired'
     expect(hc.marks.sort()).toEqual(['CP', 'PF'])
     expect(hc.certifiedThrough).toBeNull()
+  })
+})
+
+describe('case payment ledger', () => {
+  let db: Database.Database
+  let caseId: number
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    migrate(db)
+    seedIfEmpty(db)
+    caseId = createCase(db, {
+      title: 'Ledger Co',
+      licenseeName: 'Ledger Co',
+      type: 'Expired License',
+      status: 'Open',
+      source: 'Website',
+      openedAt: '2026-01-05'
+    }).id
+  })
+
+  const baseline = (): number => metricsSummary(db).grandTotalCents
+
+  it('a received payment lands in the metrics for its received year', () => {
+    const before = baseline()
+    addCasePayment(db, caseId, { amountCents: 1_000_000, received: true, date: '2026-03-14' })
+
+    const m = metricsSummary(db)
+    expect(m.grandTotalCents).toBe(before + 1_000_000)
+    const y = m.years.find((r) => r.year === 2026)!
+    expect(y.totalCents).toBe(1_000_000)
+    // Type falls through to the case's, so it isn't filed as a legacy entry.
+    expect(y.byType['Expired License']).toBe(1_000_000)
+  })
+
+  it('an expected payment is recorded but stays out of the income rollups', () => {
+    const before = baseline()
+    addCasePayment(db, caseId, { amountCents: 500_000, received: false, date: '2026-09-01' })
+
+    expect(metricsSummary(db).grandTotalCents).toBe(before)
+    const [p] = listCasePayments(db, caseId)
+    expect(p!.received).toBe(false)
+    expect(p!.dueDate).toBe('2026-09-01')
+    expect(p!.receivedDate).toBeNull()
+  })
+
+  it('marking an expected payment received books it under the date it arrived', () => {
+    const p = addCasePayment(db, caseId, {
+      amountCents: 500_000,
+      received: false,
+      date: '2026-12-20'
+    })
+    // Cheque cut in December, cleared in January — the money is 2027 income.
+    markPaymentReceived(db, p.id, '2027-01-08')
+
+    const m = metricsSummary(db)
+    expect(m.years.find((r) => r.year === 2026)?.totalCents ?? 0).toBe(0)
+    expect(m.years.find((r) => r.year === 2027)!.totalCents).toBe(500_000)
+
+    const [row] = listCasePayments(db, caseId)
+    expect(row!.received).toBe(true)
+    expect(row!.dueDate).toBe('2026-12-20')
+    expect(row!.receivedDate).toBe('2027-01-08')
+    // The timeline entry is corrected in place rather than duplicated.
+    const events = getCase(db, caseId)!.events.filter((e) => e.kind === 'payment')
+    expect(events).toHaveLength(1)
+    expect(events[0]!.body).toContain('received')
+    expect(events[0]!.at).toBe('2027-01-08')
+  })
+
+  it('resolution credit follows the case unless the payment overrides it', () => {
+    addCasePayment(db, caseId, { amountCents: 100_000, received: true, date: '2026-02-01' })
+    addCasePayment(db, caseId, {
+      amountCents: 200_000,
+      received: true,
+      date: '2026-02-02',
+      resolvedBy: 'Trestle'
+    })
+
+    // With the case unassigned, the inheriting row is unassigned too.
+    let m = metricsSummary(db)
+    expect(m.years.find((r) => r.year === 2026)!.byResolver['Unassigned']).toBe(100_000)
+    expect(m.years.find((r) => r.year === 2026)!.byResolver['Trestle']).toBe(200_000)
+
+    // Crediting the case later moves the inheriting row and leaves the override.
+    db.prepare("UPDATE cases SET resolved_by = 'JP' WHERE id = ?").run(caseId)
+    m = metricsSummary(db)
+    expect(m.years.find((r) => r.year === 2026)!.byResolver['JP']).toBe(100_000)
+    expect(m.years.find((r) => r.year === 2026)!.byResolver['Trestle']).toBe(200_000)
+
+    const rows = listCasePayments(db, caseId)
+    expect(rows[0]!.resolvedBy).toBeNull()
+    expect(rows[0]!.effectiveResolvedBy).toBe('JP')
+    expect(rows[1]!.resolvedBy).toBe('Trestle')
+  })
+
+  it('flags a same amount-and-date payment already on the ledger under another case', () => {
+    addCasePayment(db, caseId, { amountCents: 750_000, received: true, date: '2026-04-01' })
+    const other = createCase(db, {
+      title: 'Other Co',
+      licenseeName: 'Other Co',
+      type: 'Expired License',
+      status: 'Open',
+      source: 'Website',
+      openedAt: '2026-01-05'
+    }).id
+
+    const match = findDuplicatePayment(db, other, 750_000, '2026-04-01')
+    expect(match?.label).toBe('Ledger Co')
+    expect(match?.sameCase).toBe(false)
+    expect(findDuplicatePayment(db, caseId, 750_000, '2026-04-01')?.sameCase).toBe(true)
+    // A different amount or date is a different payment.
+    expect(findDuplicatePayment(db, other, 750_001, '2026-04-01')).toBeNull()
+    expect(findDuplicatePayment(db, other, 750_000, '2026-04-02')).toBeNull()
+  })
+
+  it('removing a payment takes it out of the metrics and retracts its timeline claim', () => {
+    const before = baseline()
+    const p = addCasePayment(db, caseId, {
+      amountCents: 300_000,
+      received: true,
+      date: '2026-05-05'
+    })
+    expect(metricsSummary(db).grandTotalCents).toBe(before + 300_000)
+
+    removeCasePayment(db, p.id)
+    expect(metricsSummary(db).grandTotalCents).toBe(before)
+    expect(listCasePayments(db, caseId)).toHaveLength(0)
+
+    const events = getCase(db, caseId)!.events.filter((e) => e.kind === 'payment')
+    expect(events).toHaveLength(1)
+    expect(events[0]!.body).toContain('Removed')
+  })
+
+  it('rejects amounts and dates that would corrupt the rollups', () => {
+    expect(() =>
+      addCasePayment(db, caseId, { amountCents: 0, received: true, date: '2026-01-01' })
+    ).toThrow(/greater than zero/)
+    expect(() =>
+      addCasePayment(db, caseId, { amountCents: -500, received: true, date: '2026-01-01' })
+    ).toThrow(/greater than zero/)
+    expect(() =>
+      addCasePayment(db, caseId, { amountCents: 1000, received: true, date: '05/05/2026' })
+    ).toThrow(/YYYY-MM-DD/)
+    expect(() =>
+      addCasePayment(db, 999_999, { amountCents: 1000, received: true, date: '2026-01-01' })
+    ).toThrow(/not found/)
+    expect(() => markPaymentReceived(db, 999_999, '2026-01-01')).toThrow(/not found/)
+    expect(() => removeCasePayment(db, 999_999)).toThrow(/not found/)
   })
 })

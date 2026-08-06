@@ -51,6 +51,13 @@ const api: FafoApi = {
   metricsImportCommit: (supersedeConflicts) =>
     ipcRenderer.invoke('fafo:metricsImportCommit', supersedeConflicts),
   metricsSummary: () => ipcRenderer.invoke('fafo:metricsSummary'),
+  listCasePayments: (caseId) => ipcRenderer.invoke('fafo:listCasePayments', caseId),
+  addCasePayment: (caseId, input) => ipcRenderer.invoke('fafo:addCasePayment', caseId, input),
+  markPaymentReceived: (id, receivedDate) =>
+    ipcRenderer.invoke('fafo:markPaymentReceived', id, receivedDate),
+  removeCasePayment: (id) => ipcRenderer.invoke('fafo:removeCasePayment', id),
+  findDuplicatePayment: (caseId, amountCents, date) =>
+    ipcRenderer.invoke('fafo:findDuplicatePayment', caseId, amountCents, date),
   listLegacyPayments: () => ipcRenderer.invoke('fafo:listLegacyPayments'),
   addLegacyPayment: (input) => ipcRenderer.invoke('fafo:addLegacyPayment', input),
   removeLegacyPayment: (id) => ipcRenderer.invoke('fafo:removeLegacyPayment', id),

@@ -101,6 +101,213 @@ export function metricsSummary(db: Database.Database): MetricsSummary {
   }
 }
 
+const usd = (cents: number): string =>
+  `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+/**
+ * Per-case payment ledger. Every income rollup reads `payments`, but until now
+ * rows only arrived by import or by confirming a settlement note — a cheque
+ * that landed today had nowhere to be typed in.
+ *
+ * `resolved_by` stays NULL to mean "inherit the case's resolution credit",
+ * which is what metricsSummary already coalesces to. Copying the case value
+ * onto the row instead would fossilize it: correcting the case's credit later
+ * would silently leave the money attributed to the wrong person.
+ */
+export interface CasePayment {
+  id: number
+  amountCents: number
+  dueDate: string | null
+  receivedDate: string | null
+  received: boolean
+  /** null = inherits the case's credit rather than overriding it. */
+  resolvedBy: 'JP' | 'Trestle' | null
+  /** What the rollups will actually credit this payment to. */
+  effectiveResolvedBy: 'JP' | 'Trestle' | null
+  infringementType: string | null
+  year: number | null
+  /** True when the row came from the metrics export rather than being typed here. */
+  imported: boolean
+}
+
+export interface CasePaymentInput {
+  amountCents: number
+  received: boolean
+  /** The received date when received, the due date when still expected. */
+  date: string
+  resolvedBy?: 'JP' | 'Trestle' | null
+}
+
+interface CasePaymentRow extends Omit<CasePayment, 'received' | 'imported'> {
+  received: number
+  imported: number
+}
+
+export function listCasePayments(db: Database.Database, caseId: number): CasePayment[] {
+  return (
+    db
+      .prepare(
+        `SELECT p.id, p.amount_cents AS amountCents, p.due_date AS dueDate,
+                p.received_date AS receivedDate, p.received,
+                p.resolved_by AS resolvedBy,
+                COALESCE(p.resolved_by, c.resolved_by) AS effectiveResolvedBy,
+                COALESCE(p.infringement_type, c.type) AS infringementType,
+                p.year, (p.import_key IS NOT NULL) AS imported
+         FROM payments p LEFT JOIN cases c ON c.id = p.case_id
+         WHERE p.case_id = ?
+         ORDER BY COALESCE(p.received_date, p.due_date), p.id`
+      )
+      .all(caseId) as CasePaymentRow[]
+  ).map((r) => ({ ...r, received: r.received === 1, imported: r.imported === 1 }))
+}
+
+/**
+ * A payment already on the ledger with the same amount and date. Keyed the way
+ * the metrics importer keys duplicates — across the WHOLE ledger, not per case
+ * — because the same settlement routinely sits under a differently-named case
+ * or as a legacy row, and booking it twice overstates income.
+ */
+export interface DuplicatePaymentMatch {
+  paymentId: number
+  label: string
+  sameCase: boolean
+}
+
+export function findDuplicatePayment(
+  db: Database.Database,
+  caseId: number,
+  amountCents: number,
+  date: string
+): DuplicatePaymentMatch | null {
+  const row = db
+    .prepare(
+      `SELECT p.id AS paymentId, p.case_id AS caseId,
+              COALESCE(c.title, p.source_label, '(legacy entry)') AS label
+       FROM payments p LEFT JOIN cases c ON c.id = p.case_id
+       WHERE p.amount_cents = ? AND IFNULL(p.received_date, p.due_date) = ?
+       LIMIT 1`
+    )
+    .get(amountCents, date) as
+    | { paymentId: number; caseId: number | null; label: string }
+    | undefined
+  return row
+    ? { paymentId: row.paymentId, label: row.label, sameCase: row.caseId === caseId }
+    : null
+}
+
+export function addCasePayment(
+  db: Database.Database,
+  caseId: number,
+  input: CasePaymentInput
+): CasePayment {
+  if (!db.prepare('SELECT 1 FROM cases WHERE id = ?').get(caseId))
+    throw new Error(`Case ${caseId} not found`)
+  if (!Number.isFinite(input.amountCents) || Math.round(input.amountCents) <= 0)
+    throw new Error('A payment amount must be greater than zero.')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date))
+    throw new Error('A payment needs a date in YYYY-MM-DD form.')
+
+  const cents = Math.round(input.amountCents)
+  const id = Number(
+    db
+      .prepare(
+        `INSERT INTO payments (case_id, amount_cents, due_date, received_date, received, legacy, resolved_by, year)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
+      )
+      .run(
+        caseId,
+        cents,
+        input.received ? null : input.date,
+        input.received ? input.date : null,
+        input.received ? 1 : 0,
+        input.resolvedBy ?? null,
+        parseInt(input.date.slice(0, 4), 10)
+      ).lastInsertRowid
+  )
+
+  db.prepare(
+    `INSERT INTO case_events (case_id, at, kind, body, ref_table, ref_id)
+     VALUES (?, ?, 'payment', ?, 'payments', ?)`
+  ).run(
+    caseId,
+    input.date,
+    input.received
+      ? `Payment of ${usd(cents)} received.`
+      : `Payment of ${usd(cents)} expected by ${input.date}.`,
+    id
+  )
+
+  return listCasePayments(db, caseId).find((p) => p.id === id)!
+}
+
+/**
+ * Flip an expected payment to received. The received date — not the due date —
+ * decides which year the income lands in, so it is asked for rather than
+ * assumed; a January cheque against a December invoice belongs to January.
+ */
+export function markPaymentReceived(
+  db: Database.Database,
+  id: number,
+  receivedDate: string
+): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(receivedDate))
+    throw new Error('A received date must be in YYYY-MM-DD form.')
+  const row = db
+    .prepare('SELECT case_id AS caseId, amount_cents AS cents, received FROM payments WHERE id = ?')
+    .get(id) as { caseId: number | null; cents: number; received: number } | undefined
+  if (!row) throw new Error(`Payment ${id} not found`)
+  if (row.received === 1) return
+
+  db.transaction(() => {
+    db.prepare('UPDATE payments SET received = 1, received_date = ?, year = ? WHERE id = ?').run(
+      receivedDate,
+      parseInt(receivedDate.slice(0, 4), 10),
+      id
+    )
+    if (row.caseId === null) return
+    const body = `Payment of ${usd(row.cents)} received.`
+    const updated = db
+      .prepare(
+        `UPDATE case_events SET at = ?, body = ?
+         WHERE ref_table = 'payments' AND ref_id = ? AND case_id = ?`
+      )
+      .run(receivedDate, body, id, row.caseId).changes
+    if (updated === 0) {
+      db.prepare(
+        `INSERT INTO case_events (case_id, at, kind, body, ref_table, ref_id)
+         VALUES (?, ?, 'payment', ?, 'payments', ?)`
+      ).run(row.caseId, receivedDate, body, id)
+    }
+  })()
+}
+
+export function removeCasePayment(db: Database.Database, id: number): void {
+  const row = db
+    .prepare(
+      `SELECT case_id AS caseId, amount_cents AS cents,
+              COALESCE(received_date, due_date) AS at
+       FROM payments WHERE id = ?`
+    )
+    .get(id) as { caseId: number | null; cents: number; at: string | null } | undefined
+  if (!row) throw new Error(`Payment ${id} not found`)
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM payments WHERE id = ?').run(id)
+    if (row.caseId !== null) {
+      // Drop the event that asserted the money, then log the reversal — leaving
+      // the original would keep claiming income that is no longer on the books.
+      db.prepare(
+        "DELETE FROM case_events WHERE ref_table = 'payments' AND ref_id = ? AND case_id = ?"
+      ).run(id, row.caseId)
+      db.prepare("INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'payment', ?)").run(
+        row.caseId,
+        new Date().toISOString().slice(0, 10),
+        `Removed the ${usd(row.cents)} payment dated ${row.at ?? 'unknown'} from the ledger.`
+      )
+    }
+  })()
+}
+
 /**
  * Legacy settlement entries (v1 parity). v1 kept these in localStorage under
  * `fafo_legacy_payments` so historical income that predates the case file

@@ -351,6 +351,35 @@ export interface MetricsSummary {
   resolvedCases: number
 }
 
+/** A payment row attached to a case. Received rows feed the income rollups. */
+export interface CasePayment {
+  id: number
+  amountCents: number
+  dueDate: string | null
+  receivedDate: string | null
+  received: boolean
+  /** null = inherits the case's resolution credit rather than overriding it. */
+  resolvedBy: 'JP' | 'Trestle' | null
+  effectiveResolvedBy: 'JP' | 'Trestle' | null
+  infringementType: string | null
+  year: number | null
+  imported: boolean
+}
+
+export interface CasePaymentInput {
+  amountCents: number
+  received: boolean
+  /** The received date when received, the due date when still expected. */
+  date: string
+  resolvedBy?: 'JP' | 'Trestle' | null
+}
+
+export interface DuplicatePaymentMatch {
+  paymentId: number
+  label: string
+  sameCase: boolean
+}
+
 export interface LegacyEntry {
   id: number
   label: string
@@ -530,6 +559,15 @@ export interface FafoApi {
   metricsImportPlan(): Promise<MetricsImportPlanView | null>
   metricsImportCommit(supersedeConflicts: boolean): Promise<MetricsImportResult>
   metricsSummary(): Promise<MetricsSummary>
+  listCasePayments(caseId: number): Promise<CasePayment[]>
+  addCasePayment(caseId: number, input: CasePaymentInput): Promise<CasePayment>
+  markPaymentReceived(id: number, receivedDate: string): Promise<void>
+  removeCasePayment(id: number): Promise<void>
+  findDuplicatePayment(
+    caseId: number,
+    amountCents: number,
+    date: string
+  ): Promise<DuplicatePaymentMatch | null>
   listLegacyPayments(): Promise<LegacyEntry[]>
   addLegacyPayment(input: LegacyEntryInput): Promise<LegacyEntry>
   removeLegacyPayment(id: number): Promise<void>

@@ -2,10 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type {
   CaseDeletionPreview,
   CaseEvent,
+  CasePayment,
   CaseRow,
   CaseStatus,
   Deadline,
   DeadlineKind,
+  DuplicatePaymentMatch,
   LetterView,
   NewCaseInput,
   SettlementQuote
@@ -480,6 +482,15 @@ function CaseDetail({
         </div>
       </div>
 
+      <PaymentsCard
+        caseId={id}
+        caseResolvedBy={c.resolvedBy ?? null}
+        onChanged={async () => {
+          await load()
+          await onChanged()
+        }}
+      />
+
       <SettlementCard caseId={id} />
 
       <LettersCard caseId={id} onChanged={onChanged} />
@@ -513,6 +524,308 @@ function CaseDetail({
 }
 
 const money = (n: number): string => `$${Math.round(n).toLocaleString()}`
+
+const usd = (cents: number): string =>
+  `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+/** "1,250" / "$1,250.00" / " 1250 " → 125000 cents; NaN when unparseable. */
+function parseAmountCents(raw: string): number {
+  const n = parseFloat(raw.replace(/[$,\s]/g, ''))
+  return Number.isFinite(n) ? Math.round(n * 100) : NaN
+}
+
+/**
+ * The money ledger for a case — the entry point for settlement income.
+ *
+ * Only received rows reach the metrics. Expected rows are recorded so an
+ * installment schedule is visible on the case without booking revenue that
+ * hasn't arrived. Resolution credit defaults to the case's, because the
+ * rollups fall back to it and copying the value here would fossilize it.
+ */
+function PaymentsCard({
+  caseId,
+  caseResolvedBy,
+  onChanged
+}: {
+  caseId: number
+  caseResolvedBy: 'JP' | 'Trestle' | null
+  onChanged: () => Promise<void>
+}): React.JSX.Element {
+  const blank = { amount: '', date: '', received: true, credit: 'case' as 'case' | 'JP' | 'Trestle' }
+  const [rows, setRows] = useState<CasePayment[] | null>(null)
+  const [form, setForm] = useState(blank)
+  const [dup, setDup] = useState<DuplicatePaymentMatch | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null)
+  const [collecting, setCollecting] = useState<{ id: number; date: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setRows(await window.fafo.listCasePayments(caseId))
+  }, [caseId])
+
+  useEffect(() => {
+    setForm(blank)
+    setDup(null)
+    setConfirmRemove(null)
+    setCollecting(null)
+    setError(null)
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load])
+
+  const cents = parseAmountCents(form.amount)
+  const valid = Number.isFinite(cents) && cents > 0 && /^\d{4}-\d{2}-\d{2}$/.test(form.date)
+
+  async function add(force: boolean): Promise<void> {
+    if (!valid) return
+    setBusy(true)
+    setError(null)
+    try {
+      // Amount + date is the same duplicate key the metrics importer uses, so a
+      // settlement already booked under another case name gets caught here
+      // rather than showing up as inflated income later.
+      if (!force) {
+        const match = await window.fafo.findDuplicatePayment(caseId, cents, form.date)
+        if (match) {
+          setDup(match)
+          setBusy(false)
+          return
+        }
+      }
+      await window.fafo.addCasePayment(caseId, {
+        amountCents: cents,
+        received: form.received,
+        date: form.date,
+        resolvedBy: form.credit === 'case' ? null : form.credit
+      })
+      setForm(blank)
+      setDup(null)
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  async function remove(id: number): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      await window.fafo.removeCasePayment(id)
+      setConfirmRemove(null)
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  async function collect(): Promise<void> {
+    if (!collecting) return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.fafo.markPaymentReceived(collecting.id, collecting.date)
+      setCollecting(null)
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  const receivedCents = (rows ?? []).filter((p) => p.received).reduce((s, p) => s + p.amountCents, 0)
+  const expectedCents = (rows ?? [])
+    .filter((p) => !p.received)
+    .reduce((s, p) => s + p.amountCents, 0)
+
+  return (
+    <div className="card">
+      <h2>Payments</h2>
+      {rows === null && <div className="empty">Loading…</div>}
+      {rows !== null && rows.length === 0 && (
+        <div className="empty">No payments recorded. Received payments feed the metrics.</div>
+      )}
+
+      {rows !== null && rows.length > 0 && (
+        <>
+          <p style={{ margin: '0 0 8px', fontSize: 14 }}>
+            <strong>{usd(receivedCents)}</strong> received
+            {expectedCents > 0 && (
+              <span className="deadline-meta"> · {usd(expectedCents)} still expected</span>
+            )}
+          </p>
+          {rows.map((p) => (
+            // The detail pane is narrow, so let a row wrap onto a second line
+            // rather than pushing its buttons outside the card.
+            <div key={p.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <span className="deadline-date">{p.receivedDate ?? p.dueDate ?? '—'}</span>
+              <span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>
+                {usd(p.amountCents)}
+              </span>
+              <span className={`pill ${p.received ? 'done' : 'open'}`}>
+                {p.received ? 'received' : 'expected'}
+              </span>
+              <span
+                className="deadline-meta"
+                style={{ whiteSpace: 'nowrap' }}
+                title={
+                  p.resolvedBy
+                    ? 'Credited to this person regardless of the case'
+                    : "Follows the case's resolution credit"
+                }
+              >
+                {p.effectiveResolvedBy ?? 'Unassigned'}
+                {p.resolvedBy === null && ' (case)'}
+              </span>
+              {p.imported && (
+                <span
+                  className="deadline-meta"
+                  style={{ whiteSpace: 'nowrap' }}
+                  title="Came from the metrics export"
+                >
+                  imported
+                </span>
+              )}
+              {confirmRemove === p.id ? (
+                <>
+                  <button
+                    className="subtle"
+                    style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
+                    disabled={busy}
+                    onClick={() => void remove(p.id)}
+                  >
+                    Remove
+                  </button>
+                  <button className="subtle" onClick={() => setConfirmRemove(null)}>
+                    Cancel
+                  </button>
+                </>
+              ) : collecting?.id === p.id ? (
+                <>
+                  <input
+                    type="date"
+                    value={collecting.date}
+                    title="Date the payment actually arrived"
+                    onChange={(e) => setCollecting({ id: p.id, date: e.target.value })}
+                    style={{ padding: '4px 6px', fontSize: 12.5 }}
+                  />
+                  <button className="outline" disabled={busy} onClick={() => void collect()}>
+                    Save
+                  </button>
+                  <button className="subtle" onClick={() => setCollecting(null)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  {!p.received && (
+                    <button
+                      className="subtle"
+                      style={{ whiteSpace: 'nowrap' }}
+                      title="Record the date this payment arrived"
+                      onClick={() =>
+                        setCollecting({ id: p.id, date: new Date().toISOString().slice(0, 10) })
+                      }
+                    >
+                      Mark received
+                    </button>
+                  )}
+                  <button
+                    className="subtle"
+                    title="Remove this payment"
+                    onClick={() => setConfirmRemove(p.id)}
+                  >
+                    ×
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+
+      <div className="add-row" style={{ flexWrap: 'wrap' }}>
+        <input
+          type="text"
+          placeholder="Amount, e.g. 10,000"
+          value={form.amount}
+          onChange={(e) => {
+            setForm({ ...form, amount: e.target.value })
+            setDup(null)
+          }}
+          style={{ flex: '1 1 130px', minWidth: 110 }}
+        />
+        <input
+          type="date"
+          value={form.date}
+          title={form.received ? 'Date received' : 'Date due'}
+          onChange={(e) => {
+            setForm({ ...form, date: e.target.value })
+            setDup(null)
+          }}
+        />
+        <select
+          value={form.received ? 'received' : 'expected'}
+          onChange={(e) => setForm({ ...form, received: e.target.value === 'received' })}
+        >
+          <option value="received">Received</option>
+          <option value="expected">Expected</option>
+        </select>
+        <select
+          value={form.credit}
+          title="Resolution credit for this payment"
+          onChange={(e) => setForm({ ...form, credit: e.target.value as 'case' | 'JP' | 'Trestle' })}
+        >
+          <option value="case">Case credit ({caseResolvedBy ?? 'Unassigned'})</option>
+          <option value="JP">JP</option>
+          <option value="Trestle">Trestle</option>
+        </select>
+        <button className="outline" disabled={!valid || busy} onClick={() => void add(false)}>
+          {busy ? 'Saving…' : 'Add'}
+        </button>
+      </div>
+
+      {dup && (
+        <div
+          style={{
+            marginTop: 10,
+            border: '1px solid var(--warn)',
+            borderRadius: 8,
+            padding: '8px 12px',
+            background: 'var(--warn-bg)'
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 13 }}>
+            <strong>{usd(cents)}</strong> on {form.date} is already on the ledger
+            {dup.sameCase ? ' for this case' : ` under “${dup.label}”`}. Adding it again would
+            double-count the income.
+          </p>
+          <div className="add-row">
+            <button className="outline" disabled={busy} onClick={() => void add(true)}>
+              Add anyway
+            </button>
+            <button className="subtle" onClick={() => setDup(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && <p style={{ color: 'var(--danger)', marginTop: 8, fontSize: 12.5 }}>{error}</p>}
+      {rows !== null && expectedCents > 0 && (
+        <p className="subtitle" style={{ margin: '10px 0 0' }}>
+          Expected payments are recorded here but excluded from the metrics until you mark them
+          received.
+        </p>
+      )}
+    </div>
+  )
+}
 
 /**
  * Deleting a case is for duplicates, but the same button on a real matter

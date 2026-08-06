@@ -41,15 +41,21 @@ import { scanMail } from './services/graphMail'
 import { quoteSettlement } from './services/settlement'
 import { msAccessToken } from './services/msgraph'
 import {
+  addCasePayment,
   addLegacyPayment,
   brandFeed,
   confirmSettlementPayment,
+  findDuplicatePayment,
+  listCasePayments,
   listLegacyPayments,
+  markPaymentReceived,
   metricsSummary,
   policingRecord,
   policingRecordMarkdown,
+  removeCasePayment,
   removeLegacyPayment,
   unrecordedSettlements,
+  type CasePaymentInput,
   type LegacyEntryInput
 } from './services/metrics'
 import path from 'node:path'
@@ -258,6 +264,19 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('fafo:metricsSummary', () => metricsSummary(db))
+  ipcMain.handle('fafo:listCasePayments', (_e, caseId: number) => listCasePayments(db, caseId))
+  ipcMain.handle('fafo:addCasePayment', (_e, caseId: number, input: CasePaymentInput) =>
+    addCasePayment(db, caseId, input)
+  )
+  ipcMain.handle('fafo:markPaymentReceived', (_e, id: number, receivedDate: string) =>
+    markPaymentReceived(db, id, receivedDate)
+  )
+  ipcMain.handle('fafo:removeCasePayment', (_e, id: number) => removeCasePayment(db, id))
+  ipcMain.handle(
+    'fafo:findDuplicatePayment',
+    (_e, caseId: number, amountCents: number, date: string) =>
+      findDuplicatePayment(db, caseId, amountCents, date)
+  )
   ipcMain.handle('fafo:listLegacyPayments', () => listLegacyPayments(db))
   ipcMain.handle('fafo:addLegacyPayment', (_e, input: LegacyEntryInput) =>
     addLegacyPayment(db, input)
