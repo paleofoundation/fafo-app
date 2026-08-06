@@ -407,6 +407,36 @@ export interface EmailExtractionProgress {
   failed: number
 }
 
+export interface CaseMergePreview {
+  primary: { id: number; title: string; status: CaseStatus; licenseeName: string | null }
+  duplicate: { id: number; title: string; status: CaseStatus; licenseeName: string | null }
+  moves: {
+    events: number
+    deadlines: number
+    letters: number
+    payments: number
+    paymentsCents: number
+    evidenceFiles: number
+    trackedUrls: number
+    settlements: number
+  }
+  duplicateEvidence: number
+  resolved: Array<{ field: string; from: string; to: string; changed: boolean }>
+  licenseesDiffer: boolean
+  licenseeMerge: { keep: string; absorb: string; licensesMoved: number; otherCases: number } | null
+}
+
+export interface CaseMergeResult extends CaseMergePreview {
+  mergedLicensee: boolean
+}
+
+export interface DuplicateSuggestion {
+  a: { id: number; title: string; status: CaseStatus; licenseeName: string | null; files: number }
+  b: { id: number; title: string; status: CaseStatus; licenseeName: string | null; files: number }
+  score: number
+  reason: string
+}
+
 /** Agreement facts for a case, from the extracted license record. */
 export interface CaseLicenseFacts {
   businessName: string | null
@@ -724,6 +754,13 @@ export interface FafoApi {
     amountCents: number,
     date: string
   ): Promise<DuplicatePaymentMatch | null>
+  previewCaseMerge(primaryId: number, duplicateId: number): Promise<CaseMergePreview>
+  mergeCases(
+    primaryId: number,
+    duplicateId: number,
+    mergeLicensee: boolean
+  ): Promise<CaseMergeResult>
+  duplicateCaseSuggestions(): Promise<DuplicateSuggestion[]>
   emailExtractionStatus(caseId?: number): Promise<EmailExtractionStatus>
   runEmailExtraction(limit: number, caseId?: number): Promise<EmailExtractionResult>
   onEmailExtractionProgress(cb: (p: EmailExtractionProgress) => void): () => void

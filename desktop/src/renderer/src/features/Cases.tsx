@@ -4,12 +4,14 @@ import type {
   CaseEvent,
   CaseFiles,
   CaseLicenseFacts,
+  CaseMergePreview,
   CasePayment,
   CaseRow,
   CaseStatus,
   Deadline,
   DeadlineKind,
   DuplicatePaymentMatch,
+  DuplicateSuggestion,
   EmailExtractionProgress,
   EmailExtractionResult,
   EmailExtractionStatus,
@@ -458,6 +460,7 @@ function CaseDetail({
           options={['Unassigned', 'JP', 'Trestle']}
           onSave={(v) => patch({ resolvedBy: v === 'Unassigned' ? null : (v as 'JP' | 'Trestle') })}
         />
+        <MergeCase caseId={id} title={c.title} onMerged={onDeleted} />
         <DeleteCase caseId={id} title={c.title} onDeleted={onDeleted} />
       </div>
 
@@ -1344,6 +1347,309 @@ function PaymentsCard({
           Expected payments are recorded here but excluded from the metrics until you mark them
           received.
         </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Merging duplicate matters — the same company that arrived twice, once from
+ * SignNow ("OTTO'S NATURALS LLC") and once from the folder on disk ("Ottos
+ * Naturals"), each with its own licensee and its own case.
+ *
+ * The open case is the survivor; the one picked here is absorbed and deleted.
+ * Nothing is discarded — every child row moves across — so this is the safe
+ * way to collapse a duplicate, as opposed to deleting one and losing whatever
+ * evidence or payments were filed against it.
+ */
+function MergeCase({
+  caseId,
+  title,
+  onMerged
+}: {
+  caseId: number
+  title: string
+  onMerged: () => Promise<void>
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [suggestions, setSuggestions] = useState<DuplicateSuggestion[]>([])
+  const [all, setAll] = useState<CaseRow[]>([])
+  const [search, setSearch] = useState('')
+  const [pickedId, setPickedId] = useState<number | null>(null)
+  // Which case survives. Defaults to the one that is open, but a duplicate is
+  // often the RICHER record (the folder import has the files), so the
+  // direction has to be switchable before committing — merges don't undo.
+  const [keepId, setKeepId] = useState<number | null>(null)
+  const [preview, setPreview] = useState<CaseMergePreview | null>(null)
+  const [mergeLicensee, setMergeLicensee] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setOpen(false)
+    setPickedId(null)
+    setKeepId(null)
+    setPreview(null)
+    setSearch('')
+    setError(null)
+  }, [caseId])
+
+  async function start(): Promise<void> {
+    setOpen(true)
+    setError(null)
+    try {
+      const [s, cases] = await Promise.all([
+        window.fafo.duplicateCaseSuggestions(),
+        window.fafo.listCases()
+      ])
+      setSuggestions(s.filter((x) => x.a.id === caseId || x.b.id === caseId))
+      setAll(cases.filter((c) => c.id !== caseId))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function pick(id: number, keep = caseId): Promise<void> {
+    setPickedId(id)
+    setKeepId(keep)
+    setError(null)
+    setPreview(null)
+    try {
+      const absorb = keep === caseId ? id : caseId
+      const p = await window.fafo.previewCaseMerge(keep, absorb)
+      setPreview(p)
+      setMergeLicensee(p.licenseesDiffer)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function swap(): Promise<void> {
+    if (pickedId === null) return
+    await pick(pickedId, keepId === caseId ? pickedId : caseId)
+  }
+
+  async function confirm(): Promise<void> {
+    if (pickedId === null || keepId === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      const absorb = keepId === caseId ? pickedId : caseId
+      await window.fafo.mergeCases(keepId, absorb, mergeLicensee)
+      setOpen(false)
+      setPickedId(null)
+      setPreview(null)
+      await onMerged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+        <button className="subtle" onClick={() => void start()}>
+          Merge duplicate…
+        </button>
+      </div>
+    )
+  }
+
+  const matches = search.trim()
+    ? all
+        .filter((c) =>
+          `${c.title} ${c.licenseeName ?? ''}`.toLowerCase().includes(search.toLowerCase())
+        )
+        .slice(0, 8)
+    : []
+
+  const other = (s: DuplicateSuggestion): DuplicateSuggestion['a'] =>
+    s.a.id === caseId ? s.b : s.a
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        border: '1px solid var(--line)',
+        borderRadius: 8,
+        padding: '10px 12px'
+      }}
+    >
+      {/* The heading has to track the direction — after a swap it would
+          otherwise name the case that is about to be absorbed. */}
+      <strong style={{ fontSize: 13 }}>
+        Merge into “{preview ? preview.primary.title : title}”
+      </strong>
+      <p className="subtitle" style={{ margin: '4px 0 8px' }}>
+        {preview
+          ? 'That case survives; the other is absorbed and removed. Every timeline entry, file, payment and deadline moves across first.'
+          : 'This case survives. The one you pick is absorbed and removed — all of its timeline, files, payments and deadlines move here first.'}
+      </p>
+
+      {suggestions.length > 0 && !preview && (
+        <>
+          <p className="deadline-meta" style={{ margin: '8px 0 4px' }}>
+            Likely duplicates
+          </p>
+          {suggestions.map((s) => {
+            const o = other(s)
+            return (
+              <div key={o.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                <span style={{ flex: 1, minWidth: 140 }}>
+                  {o.title}
+                  <div className="deadline-meta">
+                    {s.reason} · {o.status} · {o.files} file{o.files === 1 ? '' : 's'}
+                    {o.licenseeName && ` · ${o.licenseeName}`}
+                  </div>
+                </span>
+                <button className="subtle" onClick={() => void pick(o.id)}>
+                  Preview merge
+                </button>
+              </div>
+            )
+          })}
+        </>
+      )}
+
+      {!preview && (
+        <div className="add-row">
+          <input
+            type="text"
+            placeholder="…or search for any case"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      )}
+      {!preview &&
+        matches.map((c) => (
+          <div key={c.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+            <span style={{ flex: 1, minWidth: 140 }}>
+              {c.title}
+              <div className="deadline-meta">
+                {c.status} · opened {c.openedAt}
+                {c.licenseeName && ` · ${c.licenseeName}`}
+              </div>
+            </span>
+            <button className="subtle" onClick={() => void pick(c.id)}>
+              Preview merge
+            </button>
+          </div>
+        ))}
+
+      {preview && (
+        <div style={{ marginTop: 8 }}>
+          <p style={{ margin: '0 0 6px', fontSize: 13 }}>
+            Absorbing <strong>“{preview.duplicate.title}”</strong> ({preview.duplicate.status})
+          </p>
+          <p className="deadline-meta" style={{ margin: '0 0 8px' }}>
+            Moves:{' '}
+            {(
+              [
+                ['timeline entries', preview.moves.events],
+                ['deadlines', preview.moves.deadlines],
+                ['letters', preview.moves.letters],
+                ['payments', preview.moves.payments],
+                ['files', preview.moves.evidenceFiles],
+                ['tracked URLs', preview.moves.trackedUrls],
+                ['settlements', preview.moves.settlements]
+              ] as Array<[string, number]>
+            )
+              .filter(([, n]) => n > 0)
+              .map(([l, n]) => `${n} ${l}`)
+              .join(', ') || 'nothing — it has no attached records'}
+            {preview.moves.paymentsCents > 0 && ` · ${usd(preview.moves.paymentsCents)} of income`}
+            {preview.duplicateEvidence > 0 &&
+              ` · ${preview.duplicateEvidence} file reference${preview.duplicateEvidence === 1 ? '' : 's'} already here, so dropped`}
+          </p>
+
+          {preview.resolved.some((r) => r.changed) && (
+            <>
+              <p className="deadline-meta" style={{ margin: '8px 0 2px' }}>
+                Fields that change on this case
+              </p>
+              {preview.resolved
+                .filter((r) => r.changed)
+                .map((r) => (
+                  <div key={r.field} className="field-row" style={{ marginBottom: 4 }}>
+                    <span className="field-label">{r.field}</span>
+                    <span style={{ flex: 1, fontSize: 12.5 }}>
+                      <span className="deadline-meta">{r.from}</span> → <strong>{r.to}</strong>
+                    </span>
+                  </div>
+                ))}
+            </>
+          )}
+
+          {preview.licenseeMerge && (
+            <label
+              style={{
+                display: 'flex',
+                gap: 8,
+                alignItems: 'flex-start',
+                margin: '10px 0',
+                fontSize: 12.5
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={mergeLicensee}
+                onChange={(e) => setMergeLicensee(e.target.checked)}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                Also merge the licensee <strong>“{preview.licenseeMerge.absorb}”</strong> into{' '}
+                <strong>“{preview.licenseeMerge.keep}”</strong>
+                {preview.licenseeMerge.licensesMoved > 0 &&
+                  `, moving ${preview.licenseeMerge.licensesMoved} license${preview.licenseeMerge.licensesMoved === 1 ? '' : 's'}`}
+                {preview.licenseeMerge.otherCases > 0 &&
+                  ` and ${preview.licenseeMerge.otherCases} other case${preview.licenseeMerge.otherCases === 1 ? '' : 's'}`}
+                . The old name is kept as an alias, so a future import matches here instead of
+                splitting again.{' '}
+                {!mergeLicensee && (
+                  <span style={{ color: 'var(--warn)' }}>
+                    Leaving it unmerged means the agreement facts may still read from the other
+                    record.
+                  </span>
+                )}
+              </span>
+            </label>
+          )}
+
+          <p className="deadline-meta" style={{ margin: '8px 0 4px' }}>
+            Keeps the name, type and source of <strong>“{preview.primary.title}”</strong>. A merge
+            cannot be undone.
+          </p>
+          <div className="add-row" style={{ flexWrap: 'wrap' }}>
+            <button
+              className="outline"
+              style={{ borderColor: 'var(--ok)', color: 'var(--ok)' }}
+              disabled={busy}
+              onClick={() => void confirm()}
+            >
+              {busy ? 'Merging…' : `Merge into “${preview.primary.title}”`}
+            </button>
+            <button
+              className="subtle"
+              disabled={busy}
+              title="Swap which case survives"
+              onClick={() => void swap()}
+            >
+              Keep “{preview.duplicate.title}” instead
+            </button>
+            <button className="subtle" onClick={() => setPreview(null)}>
+              Pick a different case
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && <p style={{ color: 'var(--danger)', marginTop: 8, fontSize: 12.5 }}>{error}</p>}
+      {!preview && (
+        <button className="subtle" style={{ marginTop: 8 }} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
       )}
     </div>
   )

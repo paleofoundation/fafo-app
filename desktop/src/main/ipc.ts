@@ -297,6 +297,15 @@ export function registerIpc(): void {
     (_e, caseId: number, amountCents: number, date: string) =>
       findDuplicatePayment(db, caseId, amountCents, date)
   )
+  ipcMain.handle('fafo:previewCaseMerge', (_e, primaryId: number, duplicateId: number) =>
+    q.previewCaseMerge(db, primaryId, duplicateId)
+  )
+  ipcMain.handle(
+    'fafo:mergeCases',
+    (_e, primaryId: number, duplicateId: number, mergeLicensee: boolean) =>
+      q.mergeCases(db, primaryId, duplicateId, { mergeLicensee })
+  )
+  ipcMain.handle('fafo:duplicateCaseSuggestions', () => q.duplicateCaseSuggestions(db))
   ipcMain.handle('fafo:emailExtractionStatus', (_e, caseId?: number) => ({
     ...emailExtractionCounts(db, caseId),
     keyPresent: hasSecret(SECRET_ANTHROPIC_API_KEY)

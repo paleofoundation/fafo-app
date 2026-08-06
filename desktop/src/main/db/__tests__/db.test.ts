@@ -169,3 +169,186 @@ describe('db layer (in-memory)', () => {
     expect(marks.find((m) => m.code === 'PB')?.regStatus).toBe('Pending')
   })
 })
+
+describe('merging duplicate cases', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    migrate(db)
+    seedIfEmpty(db)
+  })
+
+  /** The real-world split: SignNow's legal name vs the folder's short name. */
+  function makePair(): { primaryId: number; dupId: number } {
+    const primary = q.createCase(db, {
+      title: "OTTO'S NATURALS LLC",
+      licenseeName: "OTTO'S NATURALS LLC",
+      type: 'Expired License',
+      status: 'Resolved',
+      source: 'Website',
+      openedAt: '2026-03-01'
+    })
+    const dup = q.createCase(db, {
+      title: 'Ottos Naturals',
+      licenseeName: 'Ottos Naturals Co',
+      type: 'Expired License',
+      status: 'In Progress',
+      source: 'Website',
+      openedAt: '2026-01-15'
+    })
+    return { primaryId: primary.id, dupId: dup.id }
+  }
+
+  it('moves every child row onto the survivor and deletes the duplicate', () => {
+    const { primaryId, dupId } = makePair()
+    q.addEvent(db, dupId, 'note', 'they replied')
+    q.addDeadline(db, {
+      kind: 'letter_response',
+      title: 'response due',
+      dueAt: '2026-04-01',
+      refTable: 'cases',
+      refId: dupId
+    })
+    db.prepare(
+      `INSERT INTO payments (case_id, amount_cents, received_date, received, year)
+       VALUES (?, 500000, '2026-02-01', 1, 2026)`
+    ).run(dupId)
+    db.prepare(
+      "INSERT INTO letters (case_id, kind, body_text, drafted_at) VALUES (?, 'enforcement', 'x', '2026-01-20')"
+    ).run(dupId)
+    db.prepare(
+      "INSERT INTO evidence_files (case_id, path, kind) VALUES (?, '/archive/otto/a.png', 'screenshot')"
+    ).run(dupId)
+
+    const preview = q.previewCaseMerge(db, primaryId, dupId)
+    expect(preview.moves.payments).toBe(1)
+    expect(preview.moves.paymentsCents).toBe(500_000)
+    expect(preview.moves.evidenceFiles).toBe(1)
+    expect(preview.moves.deadlines).toBe(1)
+    expect(preview.licenseesDiffer).toBe(true)
+
+    q.mergeCases(db, primaryId, dupId, { mergeLicensee: true })
+
+    expect(q.getCase(db, dupId)).toBeNull()
+    const after = q.getCase(db, primaryId)!
+    expect(after.events.some((e) => e.body === 'they replied')).toBe(true)
+    expect(after.events.some((e) => e.body.includes('Merged duplicate case'))).toBe(true)
+    expect(after.deadlines.some((d) => d.title === 'response due')).toBe(true)
+    for (const [table, col] of [
+      ['payments', 'case_id'],
+      ['letters', 'case_id'],
+      ['evidence_files', 'case_id']
+    ] as Array<[string, string]>) {
+      const n = db
+        .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`)
+        .get(primaryId) as { n: number }
+      expect(n.n, table).toBe(1)
+    }
+  })
+
+  it('keeps the live status and the earlier opening date', () => {
+    const { primaryId, dupId } = makePair()
+    // Primary says Resolved 2026-03-01; duplicate says In Progress 2026-01-15.
+    q.mergeCases(db, primaryId, dupId, { mergeLicensee: true })
+    const after = q.getCase(db, primaryId)!.case
+    expect(after.status).toBe('In Progress') // still live somewhere → still live
+    expect(after.openedAt).toBe('2026-01-15') // the matter began earlier
+  })
+
+  it('fills empty fields from the duplicate instead of losing them', () => {
+    const { primaryId, dupId } = makePair()
+    q.updateCase(db, dupId, {
+      url: 'ottosnaturals.example',
+      settlementPosition: '$12,000 compromise'
+    })
+    q.mergeCases(db, primaryId, dupId, { mergeLicensee: true })
+    const after = q.getCase(db, primaryId)!.case
+    expect(after.url).toBe('ottosnaturals.example')
+    expect(after.settlementPosition).toBe('$12,000 compromise')
+  })
+
+  it('adopts the duplicate folder path, which is uniquely indexed', () => {
+    const { primaryId, dupId } = makePair()
+    db.prepare('UPDATE cases SET local_folder_path = ? WHERE id = ?').run('/archive/ottos', dupId)
+    q.mergeCases(db, primaryId, dupId, { mergeLicensee: true })
+    expect(q.getCase(db, primaryId)!.case.localFolderPath).toBe('/archive/ottos')
+  })
+
+  it('drops evidence the survivor already references rather than violating the path index', () => {
+    const { primaryId, dupId } = makePair()
+    const path = '/archive/shared/same-screenshot.png'
+    db.prepare("INSERT INTO evidence_files (case_id, path, kind) VALUES (?, ?, 'screenshot')").run(
+      primaryId,
+      path
+    )
+    db.prepare("INSERT INTO evidence_files (case_id, path, kind) VALUES (?, ?, 'screenshot')").run(
+      dupId,
+      '/archive/ottos/other.png'
+    )
+    // The duplicate row can't share the path (unique index), so simulate the
+    // real case: the duplicate has a DIFFERENT row for a file already known.
+    db.prepare('UPDATE evidence_files SET path = ? WHERE case_id = ? AND path = ?').run(
+      path + '.tmp',
+      dupId,
+      '/archive/ottos/other.png'
+    )
+
+    expect(() => q.mergeCases(db, primaryId, dupId, { mergeLicensee: true })).not.toThrow()
+    const n = db
+      .prepare('SELECT COUNT(*) AS n FROM evidence_files WHERE case_id = ?')
+      .get(primaryId) as { n: number }
+    expect(n.n).toBe(2)
+  })
+
+  it('folds the duplicate licensee in and keeps its name as an alias', () => {
+    const { primaryId, dupId } = makePair()
+    const before = q.listLicensees(db).length
+    q.mergeCases(db, primaryId, dupId, { mergeLicensee: true })
+
+    expect(q.listLicensees(db)).toHaveLength(before - 1)
+    const kept = q.listLicensees(db).find((l) => l.name === "OTTO'S NATURALS LLC")!
+    // The alias is what stops the next import splitting them again.
+    expect(kept.akaNames).toContain('Ottos Naturals Co')
+    expect(q.listLicensees(db).some((l) => l.name === 'Ottos Naturals Co')).toBe(false)
+  })
+
+  it('leaves both licensees alone when asked not to merge them', () => {
+    const { primaryId, dupId } = makePair()
+    const before = q.listLicensees(db).length
+    q.mergeCases(db, primaryId, dupId, { mergeLicensee: false })
+    expect(q.listLicensees(db)).toHaveLength(before)
+  })
+
+  it('refuses to merge a case into itself', () => {
+    const { primaryId } = makePair()
+    expect(() => q.previewCaseMerge(db, primaryId, primaryId)).toThrow(/into itself/)
+    expect(() => q.previewCaseMerge(db, primaryId, 999_999)).toThrow(/not found/)
+  })
+
+  it('suggests the pair that shares a normalized company name', () => {
+    q.createCase(db, {
+      title: "Otto's Naturals",
+      licenseeName: "OTTO'S NATURALS, LLC",
+      type: 'Expired License',
+      status: 'Open',
+      source: 'Website',
+      openedAt: '2026-03-01'
+    })
+    q.createCase(db, {
+      title: 'Ottos Naturals',
+      licenseeName: 'Ottos Naturals',
+      type: 'Expired License',
+      status: 'Open',
+      source: 'Website',
+      openedAt: '2026-01-15'
+    })
+    const hits = q.duplicateCaseSuggestions(db)
+    const otto = hits.find(
+      (h) => h.a.title.toLowerCase().includes('otto') && h.b.title.toLowerCase().includes('otto')
+    )
+    expect(otto).toBeDefined()
+    expect(otto!.score).toBeGreaterThanOrEqual(0.9)
+  })
+})

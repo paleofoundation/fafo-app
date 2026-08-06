@@ -64,6 +64,11 @@ const api: FafoApi = {
   removeCasePayment: (id) => ipcRenderer.invoke('fafo:removeCasePayment', id),
   findDuplicatePayment: (caseId, amountCents, date) =>
     ipcRenderer.invoke('fafo:findDuplicatePayment', caseId, amountCents, date),
+  previewCaseMerge: (primaryId, duplicateId) =>
+    ipcRenderer.invoke('fafo:previewCaseMerge', primaryId, duplicateId),
+  mergeCases: (primaryId, duplicateId, mergeLicensee) =>
+    ipcRenderer.invoke('fafo:mergeCases', primaryId, duplicateId, mergeLicensee),
+  duplicateCaseSuggestions: () => ipcRenderer.invoke('fafo:duplicateCaseSuggestions'),
   emailExtractionStatus: (caseId) => ipcRenderer.invoke('fafo:emailExtractionStatus', caseId),
   runEmailExtraction: (limit, caseId) =>
     ipcRenderer.invoke('fafo:runEmailExtraction', limit, caseId),

@@ -3,6 +3,9 @@ import type {
   CasePatch,
   CaseRow,
   CaseEvent,
+  CaseSource,
+  CaseStatus,
+  CaseType,
   Deadline,
   EventKind,
   Licensee,
@@ -401,4 +404,398 @@ export function caseLicenseFacts(db: Database.Database, caseId: number): CaseLic
         : `No liquidated-damages clause in the ${lic.vintage ?? 'this'} agreement. Recovery is measured on the legacy basis: current fee schedule × years of use.`
     }
   }
+}
+
+/**
+ * Merging duplicate matters.
+ *
+ * The duplicates here are not typos — they are the same company arriving by
+ * two routes: SignNow says "OTTO'S NATURALS LLC", the folder on disk says
+ * "Ottos Naturals", and each creates its own licensee and its own case. So the
+ * merge has to fix BOTH levels; joining the cases while leaving two licensee
+ * records behind means the License card still reads from whichever one the
+ * case happens to point at, and the next import recreates the split.
+ *
+ * Nothing is discarded. Every child row moves to the survivor, and the fields
+ * reconcile toward the more complete/more live value rather than toward
+ * whichever case was clicked first.
+ */
+export interface CaseMergePreview {
+  primary: { id: number; title: string; status: CaseStatus; licenseeName: string | null }
+  duplicate: { id: number; title: string; status: CaseStatus; licenseeName: string | null }
+  moves: {
+    events: number
+    deadlines: number
+    letters: number
+    payments: number
+    paymentsCents: number
+    evidenceFiles: number
+    trackedUrls: number
+    settlements: number
+  }
+  /** Evidence rows pointing at a file the survivor already has — dropped, not moved. */
+  duplicateEvidence: number
+  /** Field-by-field outcome, so the result is visible before committing. */
+  resolved: Array<{ field: string; from: string; to: string; changed: boolean }>
+  /** Both cases point at different licensees; merging them is the actual fix. */
+  licenseesDiffer: boolean
+  licenseeMerge: { keep: string; absorb: string; licensesMoved: number; otherCases: number } | null
+}
+
+const MERGE_STATUS_RANK: Record<CaseStatus, number> = {
+  Open: 0,
+  'In Progress': 1,
+  Resolved: 2
+}
+const rank = (s: CaseStatus): number => MERGE_STATUS_RANK[s]
+
+function caseForMerge(
+  db: Database.Database,
+  id: number
+): {
+  id: number
+  title: string
+  type: CaseType
+  status: CaseStatus
+  source: CaseSource
+  url: string | null
+  openedAt: string
+  resolvedAt: string | null
+  resolvedBy: 'JP' | 'Trestle' | null
+  settlementPosition: string | null
+  localFolderPath: string | null
+  driveFolderId: string | null
+  licenseeId: number | null
+  licenseeName: string | null
+} {
+  const row = db
+    .prepare(
+      `SELECT c.id, c.title, c.type, c.status, c.source, c.url, c.opened_at AS openedAt,
+              c.resolved_at AS resolvedAt, c.resolved_by AS resolvedBy,
+              c.settlement_position AS settlementPosition,
+              c.local_folder_path AS localFolderPath, c.drive_folder_id AS driveFolderId,
+              c.licensee_id AS licenseeId, l.name AS licenseeName
+       FROM cases c LEFT JOIN licensees l ON l.id = c.licensee_id WHERE c.id = ?`
+    )
+    .get(id)
+  if (!row) throw new Error(`Case ${id} not found`)
+  return row as ReturnType<typeof caseForMerge>
+}
+
+/** The survivor's field values after a merge. Prefers live status, earliest start, and any value over none. */
+function reconcile(
+  primary: ReturnType<typeof caseForMerge>,
+  duplicate: ReturnType<typeof caseForMerge>
+): Record<string, string | null> {
+  const firstOf = (a: string | null, b: string | null): string | null => a ?? b
+  return {
+    // A matter that is still live somewhere is still live.
+    status: rank(primary.status) <= rank(duplicate.status) ? primary.status : duplicate.status,
+    // The matter began when the earlier of the two records says it did.
+    opened_at: primary.openedAt <= duplicate.openedAt ? primary.openedAt : duplicate.openedAt,
+    resolved_at: firstOf(primary.resolvedAt, duplicate.resolvedAt),
+    resolved_by: firstOf(primary.resolvedBy, duplicate.resolvedBy),
+    url: firstOf(primary.url, duplicate.url),
+    settlement_position: firstOf(primary.settlementPosition, duplicate.settlementPosition),
+    // Only one case may own a folder path (unique index), and the duplicate's
+    // row is going away — so adopt it if the survivor has none.
+    local_folder_path: firstOf(primary.localFolderPath, duplicate.localFolderPath),
+    drive_folder_id: firstOf(primary.driveFolderId, duplicate.driveFolderId)
+  }
+}
+
+export function previewCaseMerge(
+  db: Database.Database,
+  primaryId: number,
+  duplicateId: number
+): CaseMergePreview {
+  if (primaryId === duplicateId) throw new Error('A case cannot be merged into itself')
+  const primary = caseForMerge(db, primaryId)
+  const duplicate = caseForMerge(db, duplicateId)
+
+  const count = (sql: string): number =>
+    (db.prepare(sql).get(duplicateId) as { n: number }).n
+
+  const dupEvidence = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM evidence_files d
+         WHERE d.case_id = ? AND d.path IS NOT NULL
+           AND EXISTS (SELECT 1 FROM evidence_files p WHERE p.case_id = ? AND p.path = d.path)`
+      )
+      .get(duplicateId, primaryId) as { n: number }
+  ).n
+
+  const pay = db
+    .prepare(
+      'SELECT COUNT(*) AS n, COALESCE(SUM(amount_cents),0) AS cents FROM payments WHERE case_id = ?'
+    )
+    .get(duplicateId) as { n: number; cents: number }
+
+  const after = reconcile(primary, duplicate)
+  const before: Record<string, string | null> = {
+    status: primary.status,
+    opened_at: primary.openedAt,
+    resolved_at: primary.resolvedAt,
+    resolved_by: primary.resolvedBy,
+    url: primary.url,
+    settlement_position: primary.settlementPosition,
+    local_folder_path: primary.localFolderPath,
+    drive_folder_id: primary.driveFolderId
+  }
+  const LABELS: Record<string, string> = {
+    status: 'Status',
+    opened_at: 'Opened',
+    resolved_at: 'Resolved',
+    resolved_by: 'Resolution credit',
+    url: 'URL',
+    settlement_position: 'Settlement position',
+    local_folder_path: 'Local folder',
+    drive_folder_id: 'Drive folder'
+  }
+  const resolved = Object.keys(after).map((field) => ({
+    field: LABELS[field] ?? field,
+    from: before[field] ?? '—',
+    to: after[field] ?? '—',
+    changed: (before[field] ?? null) !== (after[field] ?? null)
+  }))
+
+  const licenseesDiffer =
+    primary.licenseeId !== null &&
+    duplicate.licenseeId !== null &&
+    primary.licenseeId !== duplicate.licenseeId
+
+  return {
+    primary: {
+      id: primary.id,
+      title: primary.title,
+      status: primary.status,
+      licenseeName: primary.licenseeName
+    },
+    duplicate: {
+      id: duplicate.id,
+      title: duplicate.title,
+      status: duplicate.status,
+      licenseeName: duplicate.licenseeName
+    },
+    moves: {
+      events: count('SELECT COUNT(*) AS n FROM case_events WHERE case_id = ?'),
+      deadlines: count(
+        "SELECT COUNT(*) AS n FROM deadlines WHERE ref_table = 'cases' AND ref_id = ?"
+      ),
+      letters: count('SELECT COUNT(*) AS n FROM letters WHERE case_id = ?'),
+      payments: pay.n,
+      paymentsCents: pay.cents,
+      evidenceFiles: count('SELECT COUNT(*) AS n FROM evidence_files WHERE case_id = ?'),
+      trackedUrls: count('SELECT COUNT(*) AS n FROM tracked_urls WHERE case_id = ?'),
+      settlements: count('SELECT COUNT(*) AS n FROM settlements WHERE case_id = ?')
+    },
+    duplicateEvidence: dupEvidence,
+    resolved,
+    licenseesDiffer,
+    licenseeMerge: licenseesDiffer
+      ? {
+          keep: primary.licenseeName ?? '(unnamed)',
+          absorb: duplicate.licenseeName ?? '(unnamed)',
+          licensesMoved: (
+            db
+              .prepare('SELECT COUNT(*) AS n FROM licenses WHERE licensee_id = ?')
+              .get(duplicate.licenseeId) as { n: number }
+          ).n,
+          otherCases: (
+            db
+              .prepare('SELECT COUNT(*) AS n FROM cases WHERE licensee_id = ? AND id != ?')
+              .get(duplicate.licenseeId, duplicateId) as { n: number }
+          ).n
+        }
+      : null
+  }
+}
+
+export interface CaseMergeResult extends CaseMergePreview {
+  mergedLicensee: boolean
+}
+
+export function mergeCases(
+  db: Database.Database,
+  primaryId: number,
+  duplicateId: number,
+  opts: { mergeLicensee: boolean } = { mergeLicensee: true }
+): CaseMergeResult {
+  const preview = previewCaseMerge(db, primaryId, duplicateId)
+  const primary = caseForMerge(db, primaryId)
+  const duplicate = caseForMerge(db, duplicateId)
+  const after = reconcile(primary, duplicate)
+  const mergeLicensee = opts.mergeLicensee && preview.licenseesDiffer
+
+  db.transaction(() => {
+    // Free the duplicate's folder path first — it is uniquely indexed, and the
+    // survivor may be about to adopt it.
+    db.prepare('UPDATE cases SET local_folder_path = NULL WHERE id = ?').run(duplicateId)
+
+    // Evidence the survivor already references would violate the unique path
+    // index on the way across, and is the same file either way.
+    db.prepare(
+      `DELETE FROM evidence_files WHERE case_id = ? AND path IS NOT NULL
+         AND EXISTS (SELECT 1 FROM evidence_files p WHERE p.case_id = ? AND p.path = evidence_files.path)`
+    ).run(duplicateId, primaryId)
+
+    for (const sql of [
+      'UPDATE case_events SET case_id = ? WHERE case_id = ?',
+      'UPDATE letters SET case_id = ? WHERE case_id = ?',
+      'UPDATE payments SET case_id = ? WHERE case_id = ?',
+      'UPDATE evidence_files SET case_id = ? WHERE case_id = ?',
+      'UPDATE tracked_urls SET case_id = ? WHERE case_id = ?',
+      'UPDATE settlements SET case_id = ? WHERE case_id = ?'
+    ]) {
+      db.prepare(sql).run(primaryId, duplicateId)
+    }
+    db.prepare(
+      "UPDATE deadlines SET ref_id = ? WHERE ref_table = 'cases' AND ref_id = ?"
+    ).run(primaryId, duplicateId)
+
+    db.prepare(
+      `UPDATE cases SET status = ?, opened_at = ?, resolved_at = ?, resolved_by = ?,
+              url = ?, settlement_position = ?, local_folder_path = ?, drive_folder_id = ?
+       WHERE id = ?`
+    ).run(
+      after.status,
+      after.opened_at,
+      after.resolved_at,
+      after.resolved_by,
+      after.url,
+      after.settlement_position,
+      after.local_folder_path,
+      after.drive_folder_id,
+      primaryId
+    )
+
+    if (mergeLicensee && primary.licenseeId !== null && duplicate.licenseeId !== null) {
+      // Keep the absorbed name as an alias so a future import matches it here
+      // instead of creating the split all over again.
+      db.prepare(
+        `UPDATE licensees
+            SET aka_names = TRIM(COALESCE(aka_names || '; ', '') || ?),
+                address = COALESCE(address, (SELECT address FROM licensees WHERE id = ?)),
+                contact_email = COALESCE(contact_email, (SELECT contact_email FROM licensees WHERE id = ?)),
+                contact_name = COALESCE(contact_name, (SELECT contact_name FROM licensees WHERE id = ?)),
+                local_folder_path = COALESCE(local_folder_path, (SELECT local_folder_path FROM licensees WHERE id = ?)),
+                repeat_infringer = MAX(repeat_infringer, (SELECT repeat_infringer FROM licensees WHERE id = ?))
+          WHERE id = ?`
+      ).run(
+        duplicate.licenseeName ?? '',
+        duplicate.licenseeId,
+        duplicate.licenseeId,
+        duplicate.licenseeId,
+        duplicate.licenseeId,
+        duplicate.licenseeId,
+        primary.licenseeId
+      )
+      db.prepare('UPDATE licenses SET licensee_id = ? WHERE licensee_id = ?').run(
+        primary.licenseeId,
+        duplicate.licenseeId
+      )
+      db.prepare('UPDATE cases SET licensee_id = ? WHERE licensee_id = ?').run(
+        primary.licenseeId,
+        duplicate.licenseeId
+      )
+      db.prepare('UPDATE tracked_urls SET licensee_id = ? WHERE licensee_id = ?').run(
+        primary.licenseeId,
+        duplicate.licenseeId
+      )
+      db.prepare('DELETE FROM licensees WHERE id = ?').run(duplicate.licenseeId)
+    }
+
+    db.prepare('UPDATE cases SET watch_item_id = NULL WHERE id = ?').run(duplicateId)
+    db.prepare('DELETE FROM cases WHERE id = ?').run(duplicateId)
+
+    const moved = Object.entries(preview.moves)
+      .filter(([k, v]) => k !== 'paymentsCents' && v > 0)
+      .map(([k, v]) => `${v} ${k.replace(/([A-Z])/g, ' $1').toLowerCase().trim()}`)
+      .join(', ')
+    db.prepare(
+      "INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'import', ?)"
+    ).run(
+      primaryId,
+      new Date().toISOString().slice(0, 10),
+      `Merged duplicate case "${duplicate.title}" (#${duplicateId}) into this matter` +
+        (moved ? `: ${moved}` : ' (it had no attached records)') +
+        (preview.duplicateEvidence > 0
+          ? `. ${preview.duplicateEvidence} evidence reference${preview.duplicateEvidence === 1 ? '' : 's'} already present here, so dropped`
+          : '') +
+        (mergeLicensee ? `. Licensee "${preview.licenseeMerge?.absorb}" folded in as an alias.` : '.')
+    )
+  })()
+
+  return { ...preview, mergedLicensee: mergeLicensee }
+}
+
+/**
+ * Likely duplicates, for finding the pairs rather than remembering them.
+ * Scored on how the split actually happens: the same normalized company name
+ * arriving from two sources, or two titles that differ only by punctuation,
+ * suffix or spacing.
+ */
+export interface DuplicateSuggestion {
+  a: { id: number; title: string; status: CaseStatus; licenseeName: string | null; files: number }
+  b: { id: number; title: string; status: CaseStatus; licenseeName: string | null; files: number }
+  score: number
+  reason: string
+}
+
+const squash = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+export function duplicateCaseSuggestions(db: Database.Database): DuplicateSuggestion[] {
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.title, c.status, c.licensee_id AS licenseeId, l.name AS licenseeName,
+              l.normalized_name AS norm,
+              (SELECT COUNT(*) FROM evidence_files f WHERE f.case_id = c.id) AS files
+       FROM cases c LEFT JOIN licensees l ON l.id = c.licensee_id`
+    )
+    .all() as Array<{
+    id: number
+    title: string
+    status: CaseStatus
+    licenseeId: number | null
+    licenseeName: string | null
+    norm: string | null
+    files: number
+  }>
+
+  const out: DuplicateSuggestion[] = []
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      const a = rows[i]!
+      const b = rows[j]!
+      if (a.licenseeId !== null && a.licenseeId === b.licenseeId) {
+        out.push({ ...pair(a, b), score: 1, reason: 'Same licensee record' })
+        continue
+      }
+      const [ta, tb] = [squash(a.title), squash(b.title)]
+      const [na, nb] = [squash(a.norm ?? ''), squash(b.norm ?? '')]
+      if (ta && ta === tb) out.push({ ...pair(a, b), score: 0.95, reason: 'Identical name' })
+      else if (na && na === nb)
+        out.push({ ...pair(a, b), score: 0.9, reason: 'Same company after normalising' })
+      else if (na && nb && na.length > 5 && (na.startsWith(nb) || nb.startsWith(na)))
+        out.push({ ...pair(a, b), score: 0.6, reason: 'One company name extends the other' })
+      else if (ta && tb && ta.length > 5 && (ta.startsWith(tb) || tb.startsWith(ta)))
+        out.push({ ...pair(a, b), score: 0.5, reason: 'One title extends the other' })
+    }
+  }
+  return out.sort((x, y) => y.score - x.score).slice(0, 40)
+}
+
+function pair(
+  a: { id: number; title: string; status: CaseStatus; licenseeName: string | null; files: number },
+  b: { id: number; title: string; status: CaseStatus; licenseeName: string | null; files: number }
+): Omit<DuplicateSuggestion, 'score' | 'reason'> {
+  const trim = (x: typeof a): DuplicateSuggestion['a'] => ({
+    id: x.id,
+    title: x.title,
+    status: x.status,
+    licenseeName: x.licenseeName,
+    files: x.files
+  })
+  return { a: trim(a), b: trim(b) }
 }
