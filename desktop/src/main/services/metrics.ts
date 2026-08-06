@@ -40,7 +40,7 @@ export function metricsSummary(db: Database.Database): MetricsSummary {
     .prepare(
       `SELECT p.amount_cents AS cents,
               COALESCE(p.year, CAST(substr(COALESCE(p.received_date, p.due_date), 1, 4) AS INTEGER)) AS year,
-              COALESCE(c.type, 'Legacy entry') AS type,
+              COALESCE(p.infringement_type, c.type, 'Legacy entry') AS type,
               COALESCE(p.resolved_by, c.resolved_by) AS resolvedBy
        FROM payments p LEFT JOIN cases c ON c.id = p.case_id
        WHERE p.received = 1`
@@ -123,15 +123,16 @@ export function addLegacyPayment(db: Database.Database, input: LegacyEntryInput)
   const id = Number(
     db
       .prepare(
-        `INSERT INTO payments (case_id, amount_cents, received_date, received, legacy, resolved_by, year, source_label)
-         VALUES (NULL, ?, ?, 1, 1, ?, ?, ?)`
+        `INSERT INTO payments (case_id, amount_cents, received_date, received, legacy, resolved_by, year, source_label, infringement_type)
+         VALUES (NULL, ?, ?, 1, 1, ?, ?, ?, ?)`
       )
       .run(
         input.amountCents,
         input.receivedDate ?? null,
         input.resolvedBy ?? null,
         input.year,
-        input.label
+        input.label,
+        input.type
       ).lastInsertRowid
   )
   return { ...input, id }
@@ -142,11 +143,12 @@ export function listLegacyPayments(db: Database.Database): LegacyEntry[] {
     db
       .prepare(
         `SELECT id, source_label AS label, amount_cents AS amountCents, year,
-                received_date AS receivedDate, resolved_by AS resolvedBy
+                received_date AS receivedDate, resolved_by AS resolvedBy,
+                infringement_type AS type
          FROM payments WHERE legacy = 1 ORDER BY year DESC, id DESC`
       )
-      .all() as Array<Omit<LegacyEntry, 'type'>>
-  ).map((r) => ({ ...r, type: 'Legacy entry' }))
+      .all() as Array<Omit<LegacyEntry, 'type'> & { type: string | null }>
+  ).map((r) => ({ ...r, type: r.type ?? 'Legacy entry' }))
 }
 
 export function removeLegacyPayment(db: Database.Database, id: number): void {

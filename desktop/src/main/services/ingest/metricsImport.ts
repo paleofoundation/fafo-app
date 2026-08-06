@@ -55,6 +55,7 @@ export interface PlannedRow {
   key: string
   rowType: MetricsRow['rowType']
   infringer: string
+  infringementType: string | null
   amountCents: number
   year: number | null
   paymentDate: string | null
@@ -208,6 +209,7 @@ export function planMetricsImport(db: Database.Database, exp: MetricsExport): Me
       key,
       rowType: r.rowType,
       infringer: infringer || '(unlabelled)',
+      infringementType: r.infringementType ?? null,
       amountCents: cents,
       year,
       paymentDate,
@@ -286,8 +288,8 @@ export function commitMetricsImport(
   )
   const insert = db.prepare(
     `INSERT OR IGNORE INTO payments
-       (case_id, amount_cents, received_date, received, legacy, resolved_by, year, source_label, import_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (case_id, amount_cents, received_date, received, legacy, resolved_by, year, source_label, import_key, infringement_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
 
   const tx = db.transaction(() => {
@@ -316,7 +318,10 @@ export function commitMetricsImport(
         p.resolvedBy,
         p.year,
         p.infringer,
-        key
+        key,
+        // Only needed when there's no case to inherit the type from; a matched
+        // case row keeps deriving its type from the case itself.
+        caseId === null ? (r.infringementType ?? null) : null
       )
       if (info.changes === 1) {
         result.imported += 1

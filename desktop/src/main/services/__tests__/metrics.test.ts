@@ -162,6 +162,10 @@ describe('legacy entries and unrecorded settlements', () => {
     expect(after.grandTotalCents).toBe(before + 500_000)
     expect(after.years.find((y) => y.year === 2021)!.totalCents).toBe(500_000)
     expect(after.resolvers.find((r) => r.who === 'JP')!.totalCents).toBe(500_000)
+    // The entry's own infringement type drives the by-type split (v1 parity),
+    // rather than collapsing into a generic "Legacy entry" bucket.
+    expect(after.years.find((y) => y.year === 2021)!.byType['Expired License']).toBe(500_000)
+    expect(listLegacyPayments(db)[0]!.type).toBe('Expired License')
     expect(listLegacyPayments(db)).toHaveLength(1)
 
     removeLegacyPayment(db, e.id)

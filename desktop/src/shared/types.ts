@@ -383,6 +383,7 @@ export interface MetricsPlanRow {
   key: string
   rowType: 'case_payment' | 'legacy_entry'
   infringer: string
+  infringementType: string | null
   amountCents: number
   year: number | null
   paymentDate: string | null

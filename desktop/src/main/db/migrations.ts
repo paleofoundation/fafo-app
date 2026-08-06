@@ -234,6 +234,14 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE payments ADD COLUMN import_key TEXT;
   CREATE UNIQUE INDEX idx_payments_import_key ON payments(import_key) WHERE import_key IS NOT NULL;
+  `,
+
+  // 005 — per-event infringement type. METRICS_SCHEMA.md: infringementType
+  // "drives the by-type breakdown", and v1 kept it on legacy entries. Without
+  // it, any row not attached to a case (legacy entries, unmatched imports)
+  // collapses into a single "Legacy entry" bucket and the by-type split lies.
+  `
+  ALTER TABLE payments ADD COLUMN infringement_type TEXT;
   `
 ]
 

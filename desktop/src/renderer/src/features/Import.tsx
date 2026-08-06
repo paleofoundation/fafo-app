@@ -151,6 +151,9 @@ function MetricsImportCard({
                   <td style={{ fontSize: 12 }}>
                     {r.rowType === 'legacy_entry' ? 'legacy' : 'case payment'}
                     {!r.received && <span className="pill soon" style={{ marginLeft: 4 }}>pending</span>}
+                    {r.infringementType && (
+                      <div className="deadline-meta">{r.infringementType}</div>
+                    )}
                   </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>{money(r.amountCents)}</td>
                   <td style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}>

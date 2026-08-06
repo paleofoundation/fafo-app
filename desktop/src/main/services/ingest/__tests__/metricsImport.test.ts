@@ -149,6 +149,41 @@ describe('v1 metrics export importer', () => {
     expect(row.received).toBe(0)
   })
 
+  it('preserves infringementType on rows with no case, driving the by-type split', () => {
+    // METRICS_SCHEMA.md: infringementType "drives the by-type breakdown".
+    // Without it every case-less row collapses into one "Legacy entry" bucket.
+    const typed: MetricsExport = {
+      schema: 'fafo.metrics.v2',
+      rows: [
+        {
+          rowType: 'legacy_entry',
+          legacyId: 11,
+          infringer: 'Historic A',
+          infringementType: 'Expired License',
+          resolvedBy: null,
+          amount: 1000,
+          year: 2020,
+          received: true
+        },
+        {
+          rowType: 'legacy_entry',
+          legacyId: 12,
+          infringer: 'Historic B',
+          infringementType: 'Unlicensed Use - Never Certified',
+          resolvedBy: null,
+          amount: 2000,
+          year: 2020,
+          received: true
+        }
+      ]
+    }
+    commitMetricsImport(db, typed, planMetricsImport(db, typed))
+    const y2020 = metricsSummary(db).years.find((y) => y.year === 2020)!
+    expect(y2020.byType['Expired License']).toBe(100_000)
+    expect(y2020.byType['Unlicensed Use - Never Certified']).toBe(200_000)
+    expect(y2020.byType['Legacy entry']).toBeUndefined()
+  })
+
   it('flags summary drift but trusts the rows', () => {
     const drifted: MetricsExport = { ...sample, summary: { realizedIncome: 99999 } }
     const plan = planMetricsImport(db, drifted)
