@@ -66,11 +66,44 @@ export interface PlannedRow {
   note: string | null
 }
 
+/**
+ * A case where the import brings payments AND the database already holds
+ * different (non-imported) payments for it. Keeping both double-counts; the
+ * export is the authoritative live record, so the stale rows should normally
+ * be superseded. Never resolved silently — the totals are shown both ways.
+ */
+export interface CaseConflict {
+  caseId: number
+  caseTitle: string
+  existing: Array<{ paymentId: number; amountCents: number; date: string | null }>
+  incoming: Array<{ amountCents: number; date: string | null }>
+  keepBothCents: number
+  supersedeCents: number
+}
+
+/**
+ * An existing payment whose collected/not-collected flag disagrees with the
+ * export. The export is the live ledger, so it decides — but flipping a row
+ * changes reported income, so it is shown and applied only on request.
+ */
+export interface StatusFix {
+  paymentId: number
+  label: string
+  amountCents: number
+  date: string | null
+  currentlyReceived: boolean
+  exportSaysReceived: boolean
+  currentResolvedBy: 'JP' | 'Trestle' | null
+  exportResolvedBy: 'JP' | 'Trestle' | null
+}
+
 export interface MetricsImportPlan {
   schemaOk: boolean
   sourceAppVersion: string | null
   exportedAt: string | null
   rows: PlannedRow[]
+  conflicts: CaseConflict[]
+  statusFixes: StatusFix[]
   totals: {
     rows: number
     toImport: number
@@ -163,13 +196,22 @@ export function planMetricsImport(db: Database.Database, exp: MetricsExport): Me
     `SELECT id, title FROM cases WHERE licensee_id = ?
      ORDER BY status = 'Resolved', opened_at DESC LIMIT 1`
   )
+  // Duplicate detection is keyed on amount + date ACROSS the whole ledger, not
+  // per case. The same settlement is often filed under a differently-named
+  // case (e.g. "Yoleez LLC" vs "Eramir LLC / Yoleez") or as a legacy row after
+  // a name-match miss; a per-case check misses those and books the money twice.
   const dupPayment = db.prepare(
-    `SELECT 1 FROM payments
-     WHERE amount_cents = ? AND IFNULL(received_date,'') = IFNULL(?,'')
-       AND IFNULL(case_id, -1) = IFNULL(?, -1) AND import_key IS NULL`
+    `SELECT p.id, p.received, p.resolved_by AS resolvedBy,
+            COALESCE(c.title, p.source_label, '(legacy)') AS label
+     FROM payments p LEFT JOIN cases c ON c.id = p.case_id
+     WHERE p.amount_cents = ? AND IFNULL(p.received_date,'') = IFNULL(?,'')
+       AND p.import_key IS NULL
+     LIMIT 1`
   )
 
   const planned: PlannedRow[] = []
+  const matchedIds = new Map<string, number | null>()
+  const statusFixes: StatusFix[] = []
   for (const r of exp.rows) {
     const key = rowKey(r)
     const cents = toCents(r.amount)
@@ -190,16 +232,47 @@ export function planMetricsImport(db: Database.Database, exp: MetricsExport): Me
         }
       }
     }
+    matchedIds.set(key, matchedCaseId)
 
     let action: RowAction = 'import'
     let note: string | null = null
+    const dup = dupPayment.get(cents, paymentDate) as
+      | { id: number; received: number; resolvedBy: 'JP' | 'Trestle' | null; label: string }
+      | undefined
     if (keyExists.get(key)) {
       action = 'already-imported'
       note = 'This export row is already in the database.'
-    } else if (dupPayment.get(cents, paymentDate, matchedCaseId)) {
+    } else if (dup) {
       action = 'duplicate-of-existing'
+      const sameStatus = (dup.received === 1) === received
+      const sameResolver = (dup.resolvedBy ?? null) === (r.resolvedBy ?? null)
+      const diffs: string[] = []
+      if (!sameStatus) {
+        diffs.push(
+          `marked ${dup.received === 1 ? 'received' : 'not received'} there, ${received ? 'received' : 'NOT received'} in the export`
+        )
+      }
+      if (!sameResolver) {
+        diffs.push(
+          `credited to ${dup.resolvedBy ?? 'Unassigned'} there, ${r.resolvedBy ?? 'Unassigned'} in the export`
+        )
+      }
       note =
-        'A payment with the same case, amount and date already exists (likely the seeded precedent) — skipped to avoid double-counting.'
+        diffs.length === 0
+          ? `Already on file as "${dup.label}" — skipped to avoid double-counting.`
+          : `Already on file as "${dup.label}", but ${diffs.join('; ')}.`
+      if (diffs.length > 0) {
+        statusFixes.push({
+          paymentId: dup.id,
+          label: dup.label,
+          amountCents: cents,
+          date: paymentDate,
+          currentlyReceived: dup.received === 1,
+          exportSaysReceived: received,
+          currentResolvedBy: dup.resolvedBy ?? null,
+          exportResolvedBy: r.resolvedBy ?? null
+        })
+      }
     } else if (year === null) {
       action = 'no-year'
       note = 'No paymentDate and no year — imported but excluded from the by-year table.'
@@ -219,6 +292,68 @@ export function planMetricsImport(db: Database.Database, exp: MetricsExport): Me
       action,
       note
     })
+  }
+
+  // Conflict detection: a case the import touches that already holds
+  // non-imported payments which the import does NOT duplicate exactly.
+  const existingFor = db.prepare(
+    `SELECT id, amount_cents AS amountCents, received_date AS date
+     FROM payments WHERE case_id = ? AND import_key IS NULL AND received = 1`
+  )
+  const conflicts: CaseConflict[] = []
+  const touchedCases = new Map<number, string>()
+  for (const p of planned) {
+    const caseId = matchedIds.get(p.key)
+    if (caseId != null && p.matchedCaseTitle) touchedCases.set(caseId, p.matchedCaseTitle)
+  }
+  for (const [caseId, caseTitle] of touchedCases) {
+    // Match against EVERY incoming row for this case, regardless of received
+    // status: a row the export marks uncollected still accounts for the
+    // existing record (it gets corrected, not deleted). Deduped rows count too,
+    // since the same settlement is often filed under a differently-named case.
+    const incomingForCase = planned.filter((p) => matchedIds.get(p.key) === caseId)
+
+    const existing = existingFor.all(caseId) as Array<{
+      id: number
+      amountCents: number
+      date: string | null
+    }>
+    const stale = existing.filter(
+      (e) =>
+        !incomingForCase.some(
+          (p) => p.amountCents === e.amountCents && (p.paymentDate ?? null) === e.date
+        )
+    )
+    if (stale.length === 0) continue
+
+    const staleCents = stale.reduce((s, e) => s + e.amountCents, 0)
+    const incomingCents = incomingForCase
+      .filter((p) => p.received)
+      .reduce((s, p) => s + p.amountCents, 0)
+    conflicts.push({
+      caseId,
+      caseTitle,
+      existing: stale.map((e) => ({ paymentId: e.id, amountCents: e.amountCents, date: e.date })),
+      incoming: incomingForCase
+        .filter((p) => p.received)
+        .map((p) => ({ amountCents: p.amountCents, date: p.paymentDate })),
+      keepBothCents: staleCents + incomingCents,
+      supersedeCents: incomingCents
+    })
+  }
+  if (conflicts.length > 0) {
+    messages.push(
+      `${conflicts.length} case${conflicts.length === 1 ? '' : 's'} already hold payments this export replaces — keeping both would double-count.`
+    )
+  }
+  if (statusFixes.length > 0) {
+    const delta = statusFixes.reduce(
+      (s, f) => s + (f.exportSaysReceived ? f.amountCents : -f.amountCents),
+      0
+    )
+    messages.push(
+      `${statusFixes.length} payment${statusFixes.length === 1 ? '' : 's'} disagree with the export on whether the money was collected (${delta >= 0 ? '+' : '−'}$${Math.abs(delta / 100).toLocaleString()} to income if aligned).`
+    )
   }
 
   const willCount = planned.filter(
@@ -249,6 +384,8 @@ export function planMetricsImport(db: Database.Database, exp: MetricsExport): Me
     sourceAppVersion: exp.sourceAppVersion ?? null,
     exportedAt: exp.exportedAt ?? null,
     rows: planned,
+    conflicts,
+    statusFixes,
     totals: {
       rows: planned.length,
       toImport: planned.filter((p) => p.action === 'import' || p.action === 'no-year').length,
@@ -272,15 +409,30 @@ export interface MetricsImportResult {
   skipped: number
   linkedToCases: number
   legacyRows: number
+  supersededPayments: number
+  statusCorrected: number
 }
 
+/**
+ * @param supersedeConflicts when true, delete the stale non-imported payments
+ * identified in `plan.conflicts` so the export's figures stand alone. Always a
+ * deliberate choice by the operator — the plan shows both totals first.
+ */
 export function commitMetricsImport(
   db: Database.Database,
   exp: MetricsExport,
-  plan: MetricsImportPlan
+  plan: MetricsImportPlan,
+  supersedeConflicts = false
 ): MetricsImportResult {
   if (!plan.schemaOk) throw new Error('Refusing to import: unexpected schema id')
-  const result: MetricsImportResult = { imported: 0, skipped: 0, linkedToCases: 0, legacyRows: 0 }
+  const result: MetricsImportResult = {
+    imported: 0,
+    skipped: 0,
+    linkedToCases: 0,
+    legacyRows: 0,
+    supersededPayments: 0,
+    statusCorrected: 0
+  }
 
   const byKey = new Map(plan.rows.map((p) => [p.key, p]))
   const findCaseByLicensee = db.prepare(
@@ -292,7 +444,37 @@ export function commitMetricsImport(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
 
+  const deletePayment = db.prepare('DELETE FROM payments WHERE id = ? AND import_key IS NULL')
+  const logSupersede = db.prepare(
+    "INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'import', ?)"
+  )
+
   const tx = db.transaction(() => {
+    if (supersedeConflicts) {
+      const today = new Date().toISOString().slice(0, 10)
+      const alignRow = db.prepare(
+        'UPDATE payments SET received = ?, resolved_by = ? WHERE id = ?'
+      )
+      for (const f of plan.statusFixes) {
+        if (
+          alignRow.run(f.exportSaysReceived ? 1 : 0, f.exportResolvedBy, f.paymentId).changes === 1
+        ) {
+          result.statusCorrected += 1
+        }
+      }
+      for (const c of plan.conflicts) {
+        for (const e of c.existing) {
+          if (deletePayment.run(e.paymentId).changes === 1) result.supersededPayments += 1
+        }
+        logSupersede.run(
+          c.caseId,
+          today,
+          `Superseded ${c.existing.length} earlier payment record${c.existing.length === 1 ? '' : 's'} (${c.existing
+            .map((e) => `$${(e.amountCents / 100).toLocaleString()}${e.date ? ` on ${e.date}` : ''}`)
+            .join(', ')}) with the v1 metrics export of ${plan.exportedAt?.slice(0, 10) ?? 'unknown date'}.`
+        )
+      }
+    }
     for (const r of exp.rows) {
       const key = rowKey(r)
       const p = byKey.get(key)

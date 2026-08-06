@@ -243,9 +243,14 @@ export function registerIpc(): void {
     lastMetricsImport = { exp, plan }
     return { file, ...plan }
   })
-  ipcMain.handle('fafo:metricsImportCommit', () => {
+  ipcMain.handle('fafo:metricsImportCommit', (_e, supersedeConflicts: boolean) => {
     if (!lastMetricsImport) throw new Error('Choose an export and review it first')
-    const r = commitMetricsImport(db, lastMetricsImport.exp, lastMetricsImport.plan)
+    const r = commitMetricsImport(
+      db,
+      lastMetricsImport.exp,
+      lastMetricsImport.plan,
+      supersedeConflicts === true
+    )
     lastMetricsImport = null
     return r
   })

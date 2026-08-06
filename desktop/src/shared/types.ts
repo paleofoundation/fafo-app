@@ -394,12 +394,23 @@ export interface MetricsPlanRow {
   note: string | null
 }
 
+export interface MetricsCaseConflict {
+  caseId: number
+  caseTitle: string
+  existing: Array<{ paymentId: number; amountCents: number; date: string | null }>
+  incoming: Array<{ amountCents: number; date: string | null }>
+  keepBothCents: number
+  supersedeCents: number
+}
+
 export interface MetricsImportPlanView {
   file: string
   schemaOk: boolean
   sourceAppVersion: string | null
   exportedAt: string | null
   rows: MetricsPlanRow[]
+  conflicts: MetricsCaseConflict[]
+  statusFixes: MetricsStatusFix[]
   totals: {
     rows: number
     toImport: number
@@ -417,11 +428,24 @@ export interface MetricsImportPlanView {
   }
 }
 
+export interface MetricsStatusFix {
+  paymentId: number
+  label: string
+  amountCents: number
+  date: string | null
+  currentlyReceived: boolean
+  exportSaysReceived: boolean
+  currentResolvedBy: 'JP' | 'Trestle' | null
+  exportResolvedBy: 'JP' | 'Trestle' | null
+}
+
 export interface MetricsImportResult {
   imported: number
   skipped: number
   linkedToCases: number
   legacyRows: number
+  supersededPayments: number
+  statusCorrected: number
 }
 
 export interface ExportResult {
@@ -488,7 +512,7 @@ export interface FafoApi {
   quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
   /** Opens a file picker; returns null if cancelled. Read-only dry run. */
   metricsImportPlan(): Promise<MetricsImportPlanView | null>
-  metricsImportCommit(): Promise<MetricsImportResult>
+  metricsImportCommit(supersedeConflicts: boolean): Promise<MetricsImportResult>
   metricsSummary(): Promise<MetricsSummary>
   listLegacyPayments(): Promise<LegacyEntry[]>
   addLegacyPayment(input: LegacyEntryInput): Promise<LegacyEntry>

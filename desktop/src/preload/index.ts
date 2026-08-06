@@ -46,7 +46,8 @@ const api: FafoApi = {
   quoteSettlement: (caseId, observedUseThrough) =>
     ipcRenderer.invoke('fafo:quoteSettlement', caseId, observedUseThrough),
   metricsImportPlan: () => ipcRenderer.invoke('fafo:metricsImportPlan'),
-  metricsImportCommit: () => ipcRenderer.invoke('fafo:metricsImportCommit'),
+  metricsImportCommit: (supersedeConflicts) =>
+    ipcRenderer.invoke('fafo:metricsImportCommit', supersedeConflicts),
   metricsSummary: () => ipcRenderer.invoke('fafo:metricsSummary'),
   listLegacyPayments: () => ipcRenderer.invoke('fafo:listLegacyPayments'),
   addLegacyPayment: (input) => ipcRenderer.invoke('fafo:addLegacyPayment', input),

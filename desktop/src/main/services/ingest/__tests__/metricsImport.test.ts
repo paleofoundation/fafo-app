@@ -184,6 +184,184 @@ describe('v1 metrics export importer', () => {
     expect(y2020.byType['Legacy entry']).toBeUndefined()
   })
 
+  it('detects stale payments the export replaces, and can supersede them', () => {
+    // v2 seeded Yoleez as $3,000 + $5,250; the live v1 export records a single
+    // $7,500 payment. Keeping both would report $15,750 for one settlement.
+    const yoleez: MetricsExport = {
+      schema: 'fafo.metrics.v2',
+      exportedAt: '2026-08-06T09:34:52.186Z',
+      rows: [
+        {
+          rowType: 'case_payment',
+          caseId: 203,
+          infringer: 'Yoleez LLC',
+          infringementType: 'Expired License',
+          resolvedBy: 'Trestle',
+          amount: 7500,
+          paymentDate: '2025-08-04',
+          year: 2025,
+          received: true
+        }
+      ]
+    }
+    const plan = planMetricsImport(db, yoleez)
+    expect(plan.conflicts).toHaveLength(1)
+    const c = plan.conflicts[0]!
+    expect(c.caseTitle).toBe('Yoleez LLC')
+    expect(c.existing).toHaveLength(2)
+    expect(c.keepBothCents).toBe(1_575_000) // 3,000 + 5,250 + 7,500
+    expect(c.supersedeCents).toBe(750_000) // 7,500
+    expect(plan.verification.messages.join(' ')).toContain('double-count')
+
+    const before = metricsSummary(db).grandTotalCents
+    const r = commitMetricsImport(db, yoleez, plan, true)
+    expect(r.supersededPayments).toBe(2)
+    // Net effect: the stale $8,250 leaves, the authoritative $7,500 arrives.
+    expect(metricsSummary(db).grandTotalCents).toBe(before - 825_000 + 750_000)
+    const ev = db
+      .prepare("SELECT body FROM case_events WHERE kind = 'import' AND body LIKE 'Superseded%'")
+      .get() as { body: string }
+    expect(ev.body).toContain('$3,000')
+  })
+
+  it('leaves stale payments alone when superseding is declined', () => {
+    const yoleez: MetricsExport = {
+      schema: 'fafo.metrics.v2',
+      rows: [
+        {
+          rowType: 'case_payment',
+          caseId: 203,
+          infringer: 'Yoleez LLC',
+          infringementType: 'Expired License',
+          resolvedBy: 'Trestle',
+          amount: 7500,
+          paymentDate: '2025-08-04',
+          year: 2025,
+          received: true
+        }
+      ]
+    }
+    const before = metricsSummary(db).grandTotalCents
+    const plan = planMetricsImport(db, yoleez)
+    const r = commitMetricsImport(db, yoleez, plan, false)
+    expect(r.supersededPayments).toBe(0)
+    expect(metricsSummary(db).grandTotalCents).toBe(before + 750_000)
+  })
+
+  it('does not report a conflict when the export exactly reproduces what is on file', () => {
+    const allive: MetricsExport = {
+      schema: 'fafo.metrics.v2',
+      rows: [
+        {
+          rowType: 'case_payment',
+          caseId: 201,
+          infringer: 'Allive Europe UAB',
+          infringementType: 'Unlicensed Use - Never Certified',
+          resolvedBy: null,
+          amount: 4000,
+          paymentDate: '2023-06-01',
+          year: 2023,
+          received: true
+        }
+      ]
+    }
+    const plan = planMetricsImport(db, allive)
+    expect(plan.rows[0]!.action).toBe('duplicate-of-existing')
+    expect(plan.conflicts).toHaveLength(0)
+  })
+
+  it('corrects an on-file payment the export says was never collected, without deleting it', () => {
+    // The app recorded Allive as collected; suppose the export says it wasn't.
+    // The row must be corrected in place — deleting it would make a re-import
+    // re-add the row, and treating it as stale would double-handle it.
+    const notCollected: MetricsExport = {
+      schema: 'fafo.metrics.v2',
+      rows: [
+        {
+          rowType: 'case_payment',
+          caseId: 201,
+          infringer: 'Allive Europe UAB',
+          infringementType: 'Unlicensed Use - Never Certified',
+          resolvedBy: 'JP',
+          amount: 4000,
+          paymentDate: '2023-06-01',
+          year: 2023,
+          received: false
+        }
+      ]
+    }
+    const before = metricsSummary(db).grandTotalCents
+    const plan = planMetricsImport(db, notCollected)
+    expect(plan.conflicts).toHaveLength(0) // accounted for, not stale
+    expect(plan.statusFixes).toHaveLength(1)
+    expect(plan.statusFixes[0]!.currentlyReceived).toBe(true)
+    expect(plan.statusFixes[0]!.exportSaysReceived).toBe(false)
+    expect(plan.statusFixes[0]!.exportResolvedBy).toBe('JP')
+
+    const r = commitMetricsImport(db, notCollected, plan, true)
+    expect(r.statusCorrected).toBe(1)
+    expect(r.supersededPayments).toBe(0)
+    expect(metricsSummary(db).grandTotalCents).toBe(before - 400_000)
+
+    // Still exactly one row for it, and a re-import is a no-op.
+    const rows = db
+      .prepare('SELECT received, resolved_by AS who FROM payments WHERE amount_cents = 400000')
+      .all() as Array<{ received: number; who: string | null }>
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.received).toBe(0)
+    expect(rows[0]!.who).toBe('JP')
+    const again = commitMetricsImport(db, notCollected, planMetricsImport(db, notCollected), true)
+    expect(again.imported).toBe(0)
+  })
+
+  it('detects the same settlement filed under a differently-named case', () => {
+    // v2 seeds Yoleez as $3,000 + $5,250; a separate case also carries the
+    // real $7,500. A per-case duplicate check misses this and books it twice.
+    db.prepare(
+      `INSERT INTO cases (licensee_id, title, type, status, source, opened_at)
+       VALUES (NULL, 'Eramir LLC / Yoleez', 'Expired License', 'Resolved', 'Website', '2025-01-01')`
+    ).run()
+    const other = db.prepare("SELECT id FROM cases WHERE title = 'Eramir LLC / Yoleez'").get() as {
+      id: number
+    }
+    db.prepare(
+      `INSERT INTO payments (case_id, amount_cents, received_date, received, year)
+       VALUES (?, 750000, '2025-08-04', 1, 2025)`
+    ).run(other.id)
+
+    const exp: MetricsExport = {
+      schema: 'fafo.metrics.v2',
+      rows: [
+        {
+          rowType: 'case_payment',
+          caseId: 203,
+          infringer: 'Yoleez LLC',
+          infringementType: 'Expired License',
+          resolvedBy: 'Trestle',
+          amount: 7500,
+          paymentDate: '2025-08-04',
+          year: 2025,
+          received: true
+        }
+      ]
+    }
+    const plan = planMetricsImport(db, exp)
+    // Recognised as already on file under the other case name…
+    expect(plan.rows[0]!.action).toBe('duplicate-of-existing')
+    expect(plan.rows[0]!.note).toContain('Eramir LLC / Yoleez')
+    // …and the orphaned seed rows are still surfaced as superseded.
+    const yoleez = plan.conflicts.find((c) => c.caseTitle === 'Yoleez LLC')!
+    expect(yoleez.existing).toHaveLength(2)
+
+    commitMetricsImport(db, exp, plan, true)
+    const total = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_cents),0) c FROM payments WHERE received = 1 AND amount_cents IN (300000,525000,750000)`
+      )
+      .get() as { c: number }
+    expect(total.c).toBe(750_000) // the one real settlement, not $15,750
+  })
+
   it('flags summary drift but trusts the rows', () => {
     const drifted: MetricsExport = { ...sample, summary: { realizedIncome: 99999 } }
     const plan = planMetricsImport(db, drifted)

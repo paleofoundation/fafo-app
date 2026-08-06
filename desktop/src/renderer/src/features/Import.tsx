@@ -32,6 +32,9 @@ function MetricsImportCard({
   const [result, setResult] = useState<MetricsImportResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The export is the live v1 record, so replacing stale rows is the correct
+  // default — but it deletes data, so it stays visible and switchable.
+  const [supersede, setSupersede] = useState(true)
 
   async function choose(): Promise<void> {
     setBusy(true)
@@ -50,7 +53,7 @@ function MetricsImportCard({
     setBusy(true)
     setError(null)
     try {
-      setResult(await window.fafo.metricsImportCommit())
+      setResult(await window.fafo.metricsImportCommit(supersede))
       setPlan(null)
       await onChanged()
     } catch (e) {
@@ -90,7 +93,12 @@ function MetricsImportCard({
         <p style={{ marginTop: 10 }}>
           <span className="pill done">imported</span> {result.imported} money events (
           {result.linkedToCases} linked to cases, {result.legacyRows} as legacy), {result.skipped}{' '}
-          skipped.
+          skipped
+          {result.supersededPayments > 0 &&
+            `, ${result.supersededPayments} superseded payment${result.supersededPayments === 1 ? '' : 's'} removed`}
+          {result.statusCorrected > 0 &&
+            `, ${result.statusCorrected} collection status${result.statusCorrected === 1 ? '' : 'es'} corrected`}
+          .
         </p>
       )}
 
@@ -117,6 +125,88 @@ function MetricsImportCard({
               </>
             )}
           </p>
+          {plan.conflicts.length > 0 && (
+            <div
+              style={{
+                background: '#FEF9EC',
+                border: '1px solid #F5DFA0',
+                borderRadius: 8,
+                padding: '10px 12px',
+                margin: '10px 0'
+              }}
+            >
+              <strong style={{ fontSize: 13 }}>
+                {plan.conflicts.length} case{plan.conflicts.length === 1 ? '' : 's'} already hold
+                payments this export replaces
+              </strong>
+              <p className="subtitle" style={{ margin: '4px 0 8px' }}>
+                These were recorded before this export existed. Keeping both would count the same
+                money twice.
+              </p>
+              {plan.conflicts.map((c) => (
+                <div key={c.caseId} style={{ fontSize: 12.5, marginBottom: 5 }}>
+                  <strong>{c.caseTitle}</strong> — on file{' '}
+                  {c.existing
+                    .map((e) => `${money(e.amountCents)}${e.date ? ` (${e.date})` : ''}`)
+                    .join(' + ')}{' '}
+                  · export brings{' '}
+                  {c.incoming
+                    .map((i) => `${money(i.amountCents)}${i.date ? ` (${i.date})` : ''}`)
+                    .join(' + ')}
+                  <div className="deadline-meta">
+                    Replace → {money(c.supersedeCents)} · Keep both → {money(c.keepBothCents)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {plan.statusFixes.length > 0 && (
+            <div
+              style={{
+                background: '#FEF9EC',
+                border: '1px solid #F5DFA0',
+                borderRadius: 8,
+                padding: '10px 12px',
+                margin: '10px 0'
+              }}
+            >
+              <strong style={{ fontSize: 13 }}>
+                {plan.statusFixes.length} payment
+                {plan.statusFixes.length === 1 ? '' : 's'} disagree on whether the money was
+                collected
+              </strong>
+              {plan.statusFixes.map((f) => (
+                <div key={f.paymentId} style={{ fontSize: 12.5, marginTop: 4 }}>
+                  <strong>{f.label}</strong> {money(f.amountCents)}
+                  {f.date && ` (${f.date})`} — on file as{' '}
+                  {f.currentlyReceived ? 'received' : 'not received'}, export says{' '}
+                  <strong>{f.exportSaysReceived ? 'received' : 'NOT received'}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+          {(plan.conflicts.length > 0 || plan.statusFixes.length > 0) && (
+            <label
+              style={{
+                display: 'flex',
+                gap: 6,
+                alignItems: 'flex-start',
+                fontSize: 12.5,
+                margin: '8px 0'
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={supersede}
+                onChange={(e) => setSupersede(e.target.checked)}
+              />
+              <span>
+                Let this export win — replace the superseded records and correct the
+                collected/not-collected flags. Recommended: the export is the live v1 ledger.
+                Unchecking keeps what&rsquo;s on file, which double-counts and overstates income.
+              </span>
+            </label>
+          )}
           <p
             className="deadline-meta"
             style={{ color: plan.verification.matches ? 'var(--ok)' : 'var(--warn)' }}
