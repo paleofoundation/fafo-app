@@ -124,8 +124,24 @@ class CodeCatcher(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 (stdlib signature)
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        CodeCatcher.code = (params.get("code") or [None])[0]
-        CodeCatcher.error = (params.get("error") or [None])[0]
+        code = (params.get("code") or [None])[0]
+        error = (params.get("error") or [None])[0]
+
+        # Ignore anything that is not the OAuth redirect. Browsers fetch
+        # /favicon.ico straight after rendering the success page, and that
+        # request carries no query string — capturing it unconditionally
+        # overwrote the authorization code with None microseconds after
+        # receiving it, so the exchange then ran with no code at all.
+        if code is None and error is None:
+            self.send_response(204)
+            self.end_headers()
+            return
+
+        # First real redirect wins; a reload must not clobber a captured code.
+        if CodeCatcher.code is None and CodeCatcher.error is None:
+            CodeCatcher.code = code
+            CodeCatcher.error = error
+
         body = (
             b"<h2>FAFO: authorization received.</h2><p>You can close this tab.</p>"
             if CodeCatcher.code
@@ -223,6 +239,10 @@ def main() -> None:
             )
         sys.exit(f"\nAuthorization failed: {CodeCatcher.error}")
 
+    if not CodeCatcher.code:
+        sys.exit(
+            "\nThe redirect arrived but carried no authorization code. Nothing was changed."
+        )
     print("Exchanging the code for a refresh token…")
     try:
         with urllib.request.urlopen(
@@ -242,7 +262,10 @@ def main() -> None:
         ) as resp:
             tokens = json.load(resp)
     except urllib.error.HTTPError as e:
-        sys.exit(f"Token exchange failed ({e.code}): {e.read().decode()[:300]}")
+        sys.exit(
+            f"Token exchange failed ({e.code}): {e.read().decode()[:400]}\n"
+            "Nothing was changed — the service still has its old token."
+        )
 
     refresh_token = tokens.get("refresh_token")
     if not refresh_token:
