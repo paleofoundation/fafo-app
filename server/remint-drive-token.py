@@ -34,8 +34,14 @@ SERVICE = "fafo-docs-mcp"
 SERVICE_URL = "https://fafo-docs-mcp-134533637471.us-central1.run.app"
 
 # Must exactly match an Authorized redirect URI on the OAuth client.
+#
+# No trailing slash, deliberately. Google's Console rejects a path or trailing
+# slash in the *Authorized JavaScript origins* field, so a slashed value fails
+# confusingly when pasted into the wrong box — and the two fields sit next to
+# each other. This form is accepted by both, and Google still routes the
+# redirect to "/", which the handler answers regardless of path.
 PORT = 8085
-REDIRECT_URI = f"http://localhost:{PORT}/"
+REDIRECT_URI = f"http://localhost:{PORT}"
 
 SCOPES = " ".join(
     [
@@ -122,9 +128,10 @@ def main() -> None:
     server = http.server.HTTPServer(("127.0.0.1", PORT), CodeCatcher)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    print(f"\nThis OAuth client must have EXACTLY this redirect URI authorized:")
+    print("\nThis OAuth client must have this URI under **Authorized redirect URIs**:")
     print(f"    {REDIRECT_URI}")
-    print("  (the trailing slash is part of the match)")
+    print("  Not the 'Authorized JavaScript origins' box above it — that is a")
+    print("  different field and will not authorize this flow.")
     print(f"  https://console.cloud.google.com/apis/credentials?project={PROJECT}\n")
     print("Opening your browser. Sign in as the Drive owner and click Allow.")
     print(f"If it doesn't open, paste this URL:\n\n{auth_url}\n")
@@ -139,8 +146,8 @@ def main() -> None:
         print(
             "\nStill nothing after 45s. If the browser shows"
             ' "Error 400: redirect_uri_mismatch", that URI is not registered yet —'
-            f"\nadd {REDIRECT_URI} to the client's Authorized redirect URIs, wait a"
-            "\nminute for Google to propagate it, then re-run this script."
+            f"\nadd {REDIRECT_URI} under Authorized redirect URIs (not JavaScript"
+            "\norigins), wait a minute for Google to propagate it, then re-run."
             "\n\nStill waiting in case you are mid sign-in…"
         )
         if not GOT_REDIRECT.wait(timeout=255):
