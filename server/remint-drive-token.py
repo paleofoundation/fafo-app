@@ -44,6 +44,31 @@ SERVICE_URL = "https://fafo-docs-mcp-134533637471.us-central1.run.app"
 PORT = 8085
 REDIRECT_URI = f"http://localhost:{PORT}"
 
+
+def parse_redirect_override(argv: list[str]) -> tuple[str, int]:
+    """
+    Let the caller point the flow at a redirect URI that is ALREADY registered,
+    instead of registering a new one. Google can take minutes to hours to
+    propagate a newly added URI, so matching what the client already has is
+    often the faster route than waiting.
+    """
+    if "--redirect-uri" not in argv:
+        return REDIRECT_URI, PORT
+    try:
+        uri = argv[argv.index("--redirect-uri") + 1].strip()
+    except IndexError:
+        sys.exit("--redirect-uri needs a value, e.g. --redirect-uri http://localhost:9000")
+
+    parsed = urllib.parse.urlparse(uri)
+    if parsed.scheme != "http" or parsed.hostname not in ("localhost", "127.0.0.1"):
+        sys.exit(
+            f"--redirect-uri must be an http loopback URI this script can listen on.\n"
+            f"Got: {uri}"
+        )
+    if not parsed.port:
+        sys.exit(f"--redirect-uri needs an explicit port, e.g. http://localhost:9000\nGot: {uri}")
+    return uri, parsed.port
+
 SCOPES = " ".join(
     [
         "https://www.googleapis.com/auth/drive",
@@ -107,6 +132,7 @@ class CodeCatcher(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    redirect_uri, port = parse_redirect_override(sys.argv)
     env = service_env()
     client_id = env.get("GOOGLE_OAUTH_CLIENT_ID")
     client_secret = env.get("GOOGLE_OAUTH_CLIENT_SECRET")
@@ -117,7 +143,7 @@ def main() -> None:
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(
         {
             "client_id": client_id,
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": SCOPES,
             # offline + consent is what makes Google return a refresh token at all.
@@ -130,18 +156,18 @@ def main() -> None:
     # the port. Bare EADDRINUSE traceback reads like a broken script rather than
     # "your last attempt is still open", so name the holder and offer the fix.
     try:
-        server = http.server.HTTPServer(("127.0.0.1", PORT), CodeCatcher)
+        server = http.server.HTTPServer(("127.0.0.1", port), CodeCatcher)
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise
         holder = subprocess.run(
-            ["lsof", "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN", "-t"],
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
             capture_output=True,
             text=True,
         ).stdout.split()
         pids = " ".join(holder) or "(unknown)"
         sys.exit(
-            f"\nPort {PORT} is already in use by PID {pids}.\n"
+            f"\nPort {port} is already in use by PID {pids}.\n"
             "That is almost certainly an earlier run of this script still waiting for a\n"
             "redirect it never got. Stop it and try again:\n\n"
             f"    kill {pids}\n\n"
@@ -150,7 +176,7 @@ def main() -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     print("\nThis OAuth client must have this URI under **Authorized redirect URIs**:")
-    print(f"    {REDIRECT_URI}")
+    print(f"    {redirect_uri}")
     print("  Not the 'Authorized JavaScript origins' box above it — that is a")
     print("  different field and will not authorize this flow.")
     print(f"  https://console.cloud.google.com/apis/credentials?project={PROJECT}\n")
@@ -167,7 +193,7 @@ def main() -> None:
         print(
             "\nStill nothing after 45s. If the browser shows"
             ' "Error 400: redirect_uri_mismatch", that URI is not registered yet —'
-            f"\nadd {REDIRECT_URI} under Authorized redirect URIs (not JavaScript"
+            f"\nadd {redirect_uri} under Authorized redirect URIs (not JavaScript"
             "\norigins), wait a minute for Google to propagate it, then re-run."
             "\n\nStill waiting in case you are mid sign-in…"
         )
@@ -196,7 +222,7 @@ def main() -> None:
                         "code": CodeCatcher.code,
                         "client_id": client_id,
                         "client_secret": client_secret,
-                        "redirect_uri": REDIRECT_URI,
+                        "redirect_uri": redirect_uri,
                         "grant_type": "authorization_code",
                     }
                 ).encode(),
@@ -258,6 +284,11 @@ USAGE = """Re-mint the fafo-docs-mcp Google refresh token and push it to Cloud R
 
   python3 server/remint-drive-token.py --run     actually do it
   python3 server/remint-drive-token.py --help    this message
+
+  --redirect-uri http://localhost:PORT
+        Use a loopback URI the OAuth client ALREADY has registered, instead of
+        the default http://localhost:8085. Faster than adding a new one, since
+        Google can take minutes to hours to propagate a change.
 
 Opens a browser for you to sign in as the Drive owner and click Allow.
 Requires gcloud authenticated as an account with access to the Cloud Run service.
