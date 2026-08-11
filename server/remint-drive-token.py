@@ -357,6 +357,28 @@ def verify() -> None:
         )
 
 
+USAGE = """Re-mint the fafo-docs-mcp Google refresh token and push it to Cloud Run.
+
+  python3 server/remint-drive-token.py --run     actually do it
+  python3 server/remint-drive-token.py --help    this message
+
+  --via-gcloud
+        Skip this project's OAuth client entirely and mint the token through
+        `gcloud auth application-default login`. Needs no Console changes and
+        no redirect-URI registration. Repoints the service at gcloud's OAuth
+        client id/secret, which is published rather than in Testing mode — so
+        the weekly expiry stops too. See the docstring for the trade-off.
+
+  --redirect-uri http://localhost:PORT
+        Use a loopback URI the OAuth client ALREADY has registered, instead of
+        the default http://localhost:8085. Faster than adding a new one, since
+        Google can take minutes to hours to propagate a change.
+
+Opens a browser for you to sign in as the Drive owner and click Allow.
+Requires gcloud authenticated as an account with access to the Cloud Run service.
+"""
+
+
 def _cli() -> None:
     try:
         via_gcloud() if "--via-gcloud" in sys.argv else main()
