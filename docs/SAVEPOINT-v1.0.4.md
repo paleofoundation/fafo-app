@@ -48,11 +48,42 @@ step is no longer required for the server to function.
 ### IMPORTANT — token expiry
 While the consent screen stays in **Testing** mode, Google expires the refresh token
 after **~7 days** (≈ June 19, 2026). When Drive calls start failing:
-  - Quick fix: re-run the consent flow to mint a new token, then update the
-    GOOGLE_REFRESH_TOKEN env var on Cloud Run.
+  - Quick fix — one command, no Console:
+    ```bash
+    python3 server/remint-drive-token.py --run
+    ```
+    Runs the consent flow, pushes GOOGLE_REFRESH_TOKEN to Cloud Run, and proves
+    it by writing a real document rather than trusting the env-var update.
   - Permanent fix: publish the consent screen to **Production** (Drive/Docs are
     sensitive-but-not-restricted for own-account use → no verification needed),
     which makes refresh tokens long-lived.
+
+    The control MOVED. "APIs & Services → OAuth consent screen" now redirects
+    into the Google Auth Platform overview, which has no publish button. It
+    lives under **Audience**:
+    https://console.cloud.google.com/auth/audience?project=project-b0292460-be69-4b2e-b3c
+    → *Publishing status: Testing* → **PUBLISH APP**.
+
+### Gotchas that cost hours once (2026-08-11)
+
+- **The redirect URI is matched byte for byte.** The client is registered with
+  `http://localhost:8085/` — trailing slash included. `…:8085` and `…:8085/`
+  are different URIs to Google, and `redirect_uri_mismatch` names neither side,
+  so a one-character drift looks exactly like an unregistered URI. If you change
+  REDIRECT_URI in the script, change the Console to match in the same sitting.
+- **Do not paste that URI into "Authorized JavaScript origins".** It sits
+  directly above "Authorized redirect URIs" and rejects any path or trailing
+  slash, so the slashed value fails there with a misleading "Invalid Origin".
+  This flow does not use origins at all.
+- **python.org's macOS Python ships with no CA bundle.** The token exchange dies
+  on CERTIFICATE_VERIFY_FAILED until you run
+  `"/Applications/Python 3.13/Install Certificates.command"` once. The script
+  now checks this before opening the browser, because authorization codes are
+  single-use and the old ordering burned a consent per attempt.
+- **Drive is not the only way out.** A generated letter lives in the app's
+  database regardless; "Save as file" on the letter writes the same branded
+  document locally with no network call. Reach for it rather than blocking a
+  filing on a token.
 
 ---
 
