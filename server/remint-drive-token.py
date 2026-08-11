@@ -122,14 +122,30 @@ def main() -> None:
     server = http.server.HTTPServer(("127.0.0.1", PORT), CodeCatcher)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    print(f"\nOpening your browser. Sign in as the Drive owner and click Allow.")
+    print(f"\nThis OAuth client must have EXACTLY this redirect URI authorized:")
+    print(f"    {REDIRECT_URI}")
+    print("  (the trailing slash is part of the match)")
+    print(f"  https://console.cloud.google.com/apis/credentials?project={PROJECT}\n")
+    print("Opening your browser. Sign in as the Drive owner and click Allow.")
     print(f"If it doesn't open, paste this URL:\n\n{auth_url}\n")
     webbrowser.open(auth_url)
 
+    # On a redirect_uri_mismatch Google renders its own error page and never
+    # redirects back, so nothing reaches the listener. Silence past this point
+    # almost always means the URI above isn't registered — say so rather than
+    # sitting for the full timeout looking like a hang.
     print("Waiting for the redirect… (Ctrl-C to abort)")
-    if not GOT_REDIRECT.wait(timeout=300):
-        server.shutdown()
-        sys.exit("\nTimed out after 5 minutes with no redirect. Nothing was changed.")
+    if not GOT_REDIRECT.wait(timeout=45):
+        print(
+            "\nStill nothing after 45s. If the browser shows"
+            ' "Error 400: redirect_uri_mismatch", that URI is not registered yet —'
+            f"\nadd {REDIRECT_URI} to the client's Authorized redirect URIs, wait a"
+            "\nminute for Google to propagate it, then re-run this script."
+            "\n\nStill waiting in case you are mid sign-in…"
+        )
+        if not GOT_REDIRECT.wait(timeout=255):
+            server.shutdown()
+            sys.exit("\nTimed out with no redirect. Nothing was changed.")
     server.shutdown()
 
     if CodeCatcher.error:
