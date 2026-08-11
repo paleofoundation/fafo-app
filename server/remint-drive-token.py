@@ -35,15 +35,18 @@ REGION = "us-central1"
 SERVICE = "fafo-docs-mcp"
 SERVICE_URL = "https://fafo-docs-mcp-134533637471.us-central1.run.app"
 
-# Must exactly match an Authorized redirect URI on the OAuth client.
+# Must match an Authorized redirect URI on the OAuth client BYTE FOR BYTE.
+# "http://localhost:8085/" and "http://localhost:8085" are different URIs to
+# Google, and a mismatch fails as redirect_uri_mismatch with no hint as to
+# which end is wrong. The trailing slash here matches what the client is
+# actually registered with — do not "tidy" it without changing the Console to
+# match, or the flow breaks.
 #
-# No trailing slash, deliberately. Google's Console rejects a path or trailing
-# slash in the *Authorized JavaScript origins* field, so a slashed value fails
-# confusingly when pasted into the wrong box — and the two fields sit next to
-# each other. This form is accepted by both, and Google still routes the
-# redirect to "/", which the handler answers regardless of path.
+# Note the neighbouring Console field, "Authorized JavaScript origins", rejects
+# any path or trailing slash. That field is not used by this flow; pasting this
+# value there produces a misleading "Invalid Origin" error.
 PORT = 8085
-REDIRECT_URI = f"http://localhost:{PORT}"
+REDIRECT_URI = f"http://localhost:{PORT}/"
 
 
 def parse_redirect_override(argv: list[str]) -> tuple[str, int]:
