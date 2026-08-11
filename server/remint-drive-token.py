@@ -21,6 +21,7 @@ from __future__ import annotations
 import errno
 import http.server
 import json
+import pathlib
 import subprocess
 import sys
 import threading
@@ -60,14 +61,21 @@ def parse_redirect_override(argv: list[str]) -> tuple[str, int]:
         sys.exit("--redirect-uri needs a value, e.g. --redirect-uri http://localhost:9000")
 
     parsed = urllib.parse.urlparse(uri)
+    try:
+        given_port = parsed.port  # raises if the port is not an integer
+    except ValueError:
+        sys.exit(
+            f"--redirect-uri has a non-numeric port: {uri}\n"
+            "Substitute a real port number, e.g. --redirect-uri http://localhost:8085"
+        )
     if parsed.scheme != "http" or parsed.hostname not in ("localhost", "127.0.0.1"):
         sys.exit(
             f"--redirect-uri must be an http loopback URI this script can listen on.\n"
             f"Got: {uri}"
         )
-    if not parsed.port:
+    if not given_port:
         sys.exit(f"--redirect-uri needs an explicit port, e.g. http://localhost:9000\nGot: {uri}")
-    return uri, parsed.port
+    return uri, given_port
 
 SCOPES = " ".join(
     [
@@ -253,6 +261,75 @@ def main() -> None:
         f"--update-env-vars=GOOGLE_REFRESH_TOKEN={refresh_token}",
     )
 
+    verify()
+
+ADC_PATH = pathlib.Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+
+
+def via_gcloud() -> None:
+    """
+    Mint the refresh token through `gcloud auth application-default login`
+    instead of this project's own OAuth client.
+
+    Why this exists: the project's client is a Web-application client whose
+    redirect URIs are editable only in the Cloud Console, and a newly added URI
+    can take hours to propagate — so the normal flow can stay blocked on
+    redirect_uri_mismatch through no fault of the operator. gcloud authorizes
+    against Google's own client, which already trusts its loopback redirect,
+    so there is nothing to register.
+
+    Trade-off, stated plainly: this repoints the service at the gcloud CLI's
+    OAuth client id/secret. Google's client is published rather than in Testing
+    mode, so the refresh token stops expiring weekly — that is the upside. The
+    downside is that the service no longer runs on a client you control. Prefer
+    the default flow once the Console registration is sorted.
+    """
+    print("Minting a refresh token via gcloud's OAuth client (no Console work needed).")
+    print("A browser will open — sign in as the Drive owner and click Allow.\n")
+    result = subprocess.run(
+        [
+            "gcloud",
+            "auth",
+            "application-default",
+            "login",
+            f"--scopes={SCOPES.replace(' ', ',')}",
+        ]
+    )
+    if result.returncode != 0:
+        sys.exit("\ngcloud login did not complete. Nothing was changed.")
+
+    if not ADC_PATH.exists():
+        sys.exit(f"\nExpected credentials at {ADC_PATH}, but it is not there. Nothing was changed.")
+    adc = json.loads(ADC_PATH.read_text())
+    client_id = adc.get("client_id")
+    client_secret = adc.get("client_secret")
+    refresh_token = adc.get("refresh_token")
+    if not (client_id and client_secret and refresh_token):
+        sys.exit(
+            "\nThose credentials have no refresh token — gcloud may have written a "
+            "service-account or external-account file. Nothing was changed."
+        )
+
+    print("\nPushing the token AND gcloud's client id/secret to Cloud Run…")
+    print("  (all three must move together — the token is only valid for its own client)")
+    run(
+        "gcloud",
+        "run",
+        "services",
+        "update",
+        SERVICE,
+        f"--region={REGION}",
+        f"--project={PROJECT}",
+        "--update-env-vars="
+        f"GOOGLE_REFRESH_TOKEN={refresh_token},"
+        f"GOOGLE_OAUTH_CLIENT_ID={client_id},"
+        f"GOOGLE_OAUTH_CLIENT_SECRET={client_secret}",
+    )
+    verify()
+
+
+def verify() -> None:
+    """Prove the service can actually write to Drive, rather than trusting the update."""
     print("Verifying with a real document write…")
     try:
         with urllib.request.urlopen(
@@ -271,32 +348,18 @@ def main() -> None:
         ) as resp:
             doc = json.load(resp)
         url = doc.get("editUrl") or doc.get("docUrl") or doc.get("url") or "(no url returned)"
-        print(f"\n✅ Drive export is working again.\n   Test doc: {url}\n   Delete it when you've confirmed.")
+        print(f"\n✅ Drive export is working again.\n   Test doc: {url}\n   Delete it when you have confirmed.")
     except urllib.error.HTTPError as e:
         sys.exit(
-            f"\n⚠️  Token updated, but the test write failed ({e.code}):\n"
+            f"\n⚠️  Env vars updated, but the test write failed ({e.code}):\n"
             f"{e.read().decode()[:300]}\n"
-            "Cloud Run may still be rolling out the new revision — wait a minute and retry the export in FAFO."
+            "Cloud Run may still be rolling out the new revision — wait a minute and retry."
         )
 
 
-USAGE = """Re-mint the fafo-docs-mcp Google refresh token and push it to Cloud Run.
-
-  python3 server/remint-drive-token.py --run     actually do it
-  python3 server/remint-drive-token.py --help    this message
-
-  --redirect-uri http://localhost:PORT
-        Use a loopback URI the OAuth client ALREADY has registered, instead of
-        the default http://localhost:8085. Faster than adding a new one, since
-        Google can take minutes to hours to propagate a change.
-
-Opens a browser for you to sign in as the Drive owner and click Allow.
-Requires gcloud authenticated as an account with access to the Cloud Run service.
-"""
-
 def _cli() -> None:
     try:
-        main()
+        via_gcloud() if "--via-gcloud" in sys.argv else main()
     except KeyboardInterrupt:
         sys.exit("\nAborted. Nothing was changed.")
 
