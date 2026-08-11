@@ -1932,6 +1932,17 @@ function LettersCard({
                 {busy === `drive-${l.id}` ? 'Exporting…' : 'Export to Drive'}
               </button>
             )}
+            {/* Drive depends on a Cloud Run token that expires every ~7 days.
+                A referral summary counsel is waiting on must not be stuck
+                behind that, so saving locally is always available. */}
+            <button
+              className="subtle"
+              disabled={busy !== null}
+              title="Save the branded document to a file — no Drive required"
+              onClick={() => void act(`file-${l.id}`, () => window.fafo.saveLetterToFile(l.id))}
+            >
+              {busy === `file-${l.id}` ? 'Saving…' : 'Save as file'}
+            </button>
           </div>
           {open === l.id && (
             <pre

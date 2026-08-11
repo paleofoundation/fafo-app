@@ -76,6 +76,7 @@ import {
   type LegacyEntryInput
 } from './services/metrics'
 import path from 'node:path'
+import { safeFilename } from '../shared/domain/naming'
 import {
   getSecret,
   hasSecret,
@@ -244,6 +245,41 @@ export function registerIpc(): void {
       ).run(letter.caseId, new Date().toISOString().slice(0, 10), `${label} exported to Drive: ${url}`)
     }
     return getLetter(db, letterId)
+  })
+  /**
+   * Save a letter as a branded HTML file on disk, with no Drive round trip.
+   *
+   * The Drive export depends on a Cloud Run service whose OAuth refresh token
+   * expires every ~7 days while the consent screen stays in Testing mode. A
+   * referral summary that outside counsel is waiting on must not be trapped in
+   * the app because of that, so this path shares the same branded rendering
+   * and never touches the network.
+   */
+  ipcMain.handle('fafo:saveLetterToFile', async (_e, letterId: number) => {
+    const letter = getLetter(db, letterId)
+    if (!letter) throw new Error(`Letter ${letterId} not found`)
+    const c = db.prepare('SELECT title FROM cases WHERE id = ?').get(letter.caseId) as {
+      title: string
+    }
+    const label = letter.kind === 'enforcement' ? 'Enforcement Letter' : 'Legal Referral Summary'
+    const title = `FAFO ${label} — ${c.title} ${letter.draftedAt}`
+    const suggested = `${safeFilename(title)}.html`
+
+    const picked = await dialog.showSaveDialog({
+      title: `Save ${label}`,
+      defaultPath: path.join(app.getPath('downloads'), suggested),
+      filters: [{ name: 'HTML document', extensions: ['html'] }]
+    })
+    if (picked.canceled || !picked.filePath) return null
+
+    fs.writeFileSync(picked.filePath, letterToHtml(title, letter.bodyText), 'utf8')
+    db.prepare("INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'note', ?)").run(
+      letter.caseId,
+      new Date().toISOString().slice(0, 10),
+      `${label} saved to ${picked.filePath}`
+    )
+    shell.showItemInFolder(picked.filePath)
+    return picked.filePath
   })
   ipcMain.handle('fafo:scanMailNow', async () => scanMail(db, await msAccessToken(db)))
   ipcMain.handle('fafo:quoteSettlement', (_e, caseId: number, observedUseThrough?: string) =>

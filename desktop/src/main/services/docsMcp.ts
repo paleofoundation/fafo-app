@@ -33,9 +33,19 @@ export async function createBrandedDoc(
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(
-      `docs-mcp ${res.status}: ${body.slice(0, 200) || 'no body'}${res.status === 401 || res.status === 500 ? ' — the service refresh token may have expired (OAuth consent screen is in Testing mode; see docs/SAVEPOINT-v1.0.4.md)' : ''}`
-    )
+    // invalid_grant is the specific, recurring failure: Google expires the
+    // service's refresh token every ~7 days while the consent screen sits in
+    // Testing mode. Name the fix rather than the symptom — and point at the
+    // local save, so the export is never a dead end.
+    if (body.includes('invalid_grant')) {
+      throw new Error(
+        'Google rejected the stored refresh token (invalid_grant). It expires about every 7 days ' +
+          'while the OAuth consent screen is in Testing mode. Use "Save as file" to get this ' +
+          'document out now, then re-mint the token or publish the consent screen to Production ' +
+          '— procedure in docs/SAVEPOINT-v1.0.4.md.'
+      )
+    }
+    throw new Error(`docs-mcp ${res.status}: ${body.slice(0, 200) || 'no body'}`)
   }
   const raw = (await res.json()) as Record<string, unknown>
   const pick = (...keys: string[]): string | null => {

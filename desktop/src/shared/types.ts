@@ -738,6 +738,7 @@ export interface FafoApi {
   generateLetter(caseId: number, kind: 'enforcement' | 'referral_summary'): Promise<LetterView>
   markLetterSent(letterId: number): Promise<LetterView>
   exportLetterToDrive(letterId: number): Promise<LetterView>
+  saveLetterToFile(letterId: number): Promise<string | null>
   scanMailNow(): Promise<MailScanResult>
   quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
   /** Opens a file picker; returns null if cancelled. Read-only dry run. */
