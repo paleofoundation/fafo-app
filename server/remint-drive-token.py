@@ -18,6 +18,7 @@ Usage:  python3 server/remint-drive-token.py --run
 
 from __future__ import annotations
 
+import errno
 import http.server
 import json
 import subprocess
@@ -125,7 +126,27 @@ def main() -> None:
         }
     )
 
-    server = http.server.HTTPServer(("127.0.0.1", PORT), CodeCatcher)
+    # A previous run that never received its redirect keeps waiting, and keeps
+    # the port. Bare EADDRINUSE traceback reads like a broken script rather than
+    # "your last attempt is still open", so name the holder and offer the fix.
+    try:
+        server = http.server.HTTPServer(("127.0.0.1", PORT), CodeCatcher)
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        holder = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        pids = " ".join(holder) or "(unknown)"
+        sys.exit(
+            f"\nPort {PORT} is already in use by PID {pids}.\n"
+            "That is almost certainly an earlier run of this script still waiting for a\n"
+            "redirect it never got. Stop it and try again:\n\n"
+            f"    kill {pids}\n\n"
+            "Nothing was changed."
+        )
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     print("\nThis OAuth client must have this URI under **Authorized redirect URIs**:")
@@ -242,10 +263,17 @@ Opens a browser for you to sign in as the Drive owner and click Allow.
 Requires gcloud authenticated as an account with access to the Cloud Run service.
 """
 
+def _cli() -> None:
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit("\nAborted. Nothing was changed.")
+
+
 if __name__ == "__main__":
     # Explicit --run only. This script opens a browser and rewrites a production
     # env var; it must never fire from an accidental or exploratory invocation.
     if "--run" not in sys.argv:
         print(USAGE)
         sys.exit(0)
-    main()
+    _cli()
