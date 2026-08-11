@@ -4,6 +4,8 @@
  * refresh-token auth handled service-side. URL from docs/SAVEPOINT-v1.0.4.md.
  */
 
+import { getSecret, SECRET_DOCS_MCP_KEY } from '../secrets'
+
 const DOCS_MCP_URL = 'https://fafo-docs-mcp-134533637471.us-central1.run.app'
 
 /**
@@ -25,9 +27,20 @@ export async function createBrandedDoc(
   html: string,
   folderId?: string | null
 ): Promise<BrandedDocResult> {
+  // The service rejects anonymous callers. Cloud Run's invoker check is public
+  // by necessity — the desktop app cannot mint a Google identity token — so
+  // this shared secret is the control that actually gates Drive access.
+  const sharedKey = getSecret(SECRET_DOCS_MCP_KEY)
+  if (!sharedKey) {
+    throw new Error(
+      'No docs-mcp key stored, so Drive export cannot authenticate. Use "Save as file" ' +
+        'to get this document out, and re-run server/remint-drive-token.py or restore the ' +
+        'key in Settings.'
+    )
+  }
   const res = await fetch(`${DOCS_MCP_URL}/create-doc`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-FAFO-Key': sharedKey },
     // Default to the Cases folder so exports land where v1 filed them.
     body: JSON.stringify({ title, html, folderId: folderId ?? CASES_FOLDER_ID })
   })
@@ -37,6 +50,12 @@ export async function createBrandedDoc(
     // service's refresh token every ~7 days while the consent screen sits in
     // Testing mode. Name the fix rather than the symptom — and point at the
     // local save, so the export is never a dead end.
+    if (res.status === 401) {
+      throw new Error(
+        'The docs-mcp service rejected our key. It was rotated or never stored — ' +
+          'use "Save as file" for now and restore the key in Settings.'
+      )
+    }
     if (body.includes('invalid_grant')) {
       throw new Error(
         'Google rejected the stored refresh token (invalid_grant). It expires about every 7 days ' +

@@ -85,3 +85,5 @@ export function migrateBootstrapSecrets(): void {
 
 export const SECRET_SIGNNOW_API_KEY = 'signnow.apiKey'
 export const SECRET_ANTHROPIC_API_KEY = 'anthropic.apiKey'
+/** Shared secret the docs-mcp service requires on every Drive-touching call. */
+export const SECRET_DOCS_MCP_KEY = 'docsMcp.sharedKey'
