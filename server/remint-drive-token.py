@@ -158,8 +158,36 @@ class CodeCatcher(http.server.BaseHTTPRequestHandler):
         pass  # keep the terminal clean
 
 
+def preflight_tls() -> None:
+    """
+    Confirm this interpreter can verify Google's certificate BEFORE the browser
+    round trip. An authorization code is single-use, so discovering a broken
+    trust store at the exchange step burns a consent every attempt — and the
+    python.org macOS build ships with no CA bundle until its installer is run.
+    """
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request("https://oauth2.googleapis.com/token", data=b"", method="POST"),
+            timeout=30,
+        )
+    except urllib.error.HTTPError:
+        return  # reached Google and it objected to the empty body: TLS is fine
+    except urllib.error.URLError as e:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(e.reason):
+            sys.exit(f"Cannot reach Google to exchange the token: {e.reason}")
+        installer = "/Applications/Python 3.13/Install Certificates.command"
+        sys.exit(
+            "This Python cannot verify Google's TLS certificate — it has no CA bundle.\n"
+            "The python.org macOS build ships without one until you run its installer:\n\n"
+            f'    "{installer}"\n\n'
+            "(adjust the version if yours differs). Then re-run this script.\n"
+            "Nothing was changed."
+        )
+
+
 def main() -> None:
     redirect_uri, port = parse_redirect_override(sys.argv)
+    preflight_tls()
     env = service_env()
     client_id = env.get("GOOGLE_OAUTH_CLIENT_ID")
     client_secret = env.get("GOOGLE_OAUTH_CLIENT_SECRET")
