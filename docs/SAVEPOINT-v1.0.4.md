@@ -64,6 +64,22 @@ after **~7 days** (≈ June 19, 2026). When Drive calls start failing:
     https://console.cloud.google.com/auth/audience?project=project-b0292460-be69-4b2e-b3c
     → *Publishing status: Testing* → **PUBLISH APP**.
 
+### Publishing does not rescue a token already minted (2026-08-26)
+
+The refresh token minted on 2026-08-11 died anyway, and Drive export failed with
+`invalid_grant` fifteen days later. It was issued *before* the consent screen was
+published, so it kept the 7-day Testing-mode expiry it was born with; publishing
+changes what Google issues next, not what it already issued. Re-mint once more
+after publishing and that token should persist:
+
+```
+python3 server/remint-drive-token.py --run
+```
+
+If a token minted *after* publication still expires on a weekly cadence, the
+consent screen is not actually in Production — check Google Auth Platform →
+Audience, not the old OAuth consent screen page.
+
 ### Gotchas that cost hours once (2026-08-11)
 
 - **The redirect URI is matched byte for byte.** The client is registered with
