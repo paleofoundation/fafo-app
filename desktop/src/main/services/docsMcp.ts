@@ -22,10 +22,20 @@ export interface BrandedDocResult {
   raw: Record<string, unknown>
 }
 
+/** One capture, already downscaled, for the service to stage and inline. */
+export interface DocImage {
+  id: string
+  dataBase64: string
+  mimeType: string
+  widthPt: number
+  heightPt: number
+}
+
 export async function createBrandedDoc(
   title: string,
   html: string,
-  folderId?: string | null
+  folderId?: string | null,
+  images: DocImage[] = []
 ): Promise<BrandedDocResult> {
   // The service rejects anonymous callers. Cloud Run's invoker check is public
   // by necessity — the desktop app cannot mint a Google identity token — so
@@ -42,7 +52,12 @@ export async function createBrandedDoc(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-FAFO-Key': sharedKey },
     // Default to the Cases folder so exports land where v1 filed them.
-    body: JSON.stringify({ title, html, folderId: folderId ?? CASES_FOLDER_ID })
+    body: JSON.stringify({
+      title,
+      html,
+      folderId: folderId ?? CASES_FOLDER_ID,
+      ...(images.length ? { images } : {})
+    })
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')

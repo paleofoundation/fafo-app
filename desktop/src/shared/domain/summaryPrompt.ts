@@ -1,12 +1,18 @@
 /**
- * Legal Referral Summary (SUMMARY v1.0) prompt. Ported verbatim from
- * current-build/src/FAFOApp.jsx genSummary (lines 2291–2399): same 8-section
- * structure, same system prompt, same case-data preamble.
+ * Legal Referral Summary (SUMMARY v2.0) prompt.
+ *
+ * v1.0 carried eight sections inherited from the Claude.ai artifact. v2.0 cuts
+ * it to the four counsel actually reads: who they are and what they signed, what
+ * was said and when, what proves it, and what we are asking for. Background,
+ * Infringement, Defenses and Recommended Counsel Actions are gone — the first
+ * two restated facts already carried by §1 and §2, the third invited the model
+ * to invent defenses nobody had raised, and the fourth had FAFO recommending
+ * legal strategy to the lawyers it is briefing.
  */
 
 import { MASTER_REF } from './masterRef'
 
-export const SUMMARY_SYSTEM_PROMPT = `You are drafting a Legal Referral Summary for Paleo Certified, Inc. dba The Paleo Foundation per the FAFO SUMMARY v1.0 protocol. Output must be professional, precise, and counsel-ready. Populate every required section. Use formal legal language. Do not add preamble or commentary outside the document structure. Where case data is sparse, note what is unknown rather than fabricating details.`
+export const SUMMARY_SYSTEM_PROMPT = `You are drafting a Legal Referral Summary for Paleo Certified, Inc. dba The Paleo Foundation per the FAFO SUMMARY v2.0 protocol. Output must be professional, precise, and counsel-ready. Populate every required section. Use formal legal language. Do not add preamble or commentary outside the document structure. Where case data is sparse, note what is unknown rather than fabricating details.`
 
 export interface SummaryInput {
   infringer: string
@@ -30,6 +36,8 @@ export interface SummaryInput {
   deadlines: string[]
   /** "$amount on date — received|pending" lines */
   payments: string[]
+  /** Up to five dated captures embedded in §3 as exhibits. */
+  screenshots: ScreenshotExhibit[]
 }
 
 /**
@@ -49,6 +57,25 @@ export interface EvidenceManifest {
   earliest: string | null
   latest: string | null
 }
+
+/** One capture reproduced in the referral, with the facts that make it evidence. */
+export interface ScreenshotExhibit {
+  /** "A", "B", … — how counsel cites it. */
+  label: string
+  path: string
+  fileName: string
+  /** Website / Amazon / Instagram / … from the folder it was filed under. */
+  platform: string | null
+  /** Capture date, from the session folder or the filename. */
+  date: string | null
+}
+
+/**
+ * Marker the export replaces with the actual images. The model is told to emit
+ * it so the captures land where its prose expects them; if it drops the line,
+ * the exporter inserts the block before §4 anyway.
+ */
+export const SCREENSHOT_MARKER = '[[FAFO:SCREENSHOTS]]'
 
 export function renderEvidence(e: EvidenceManifest): string {
   if (e.total === 0) {
@@ -74,23 +101,54 @@ export function renderEvidence(e: EvidenceManifest): string {
   return lines.join('\n')
 }
 
+export function renderScreenshots(shots: ScreenshotExhibit[]): string {
+  if (shots.length === 0) {
+    return 'No screenshot captures are indexed for this case.'
+  }
+  return shots
+    .map(
+      (s) =>
+        `Exhibit ${s.label} — ${s.platform ?? 'capture'}, ${s.date ?? 'date not recorded'} (${s.fileName})`
+    )
+    .join('\n')
+}
+
+/** Only the change-of-ownership matters carry an acquisition narrative. */
+export function isChangeOfOwnership(caseType: string): boolean {
+  return /change\s+(in|of)\s+ownership/i.test(caseType)
+}
+
 export function buildSummaryUserPrompt(c: SummaryInput): string {
   const notesText = c.notes.join('\n')
   const evidenceText = renderEvidence(c.evidence)
+  const screenshotText = renderScreenshots(c.screenshots)
   const correspondenceText = c.correspondence.length
     ? c.correspondence.join('\n')
     : 'No inter-party correspondence has been extracted into the case record.'
   const deadlinesText = c.deadlines.length ? c.deadlines.join('\n') : 'None recorded'
   const paymentsText = c.payments.join('; ') || 'None'
   const resolvedBy = c.resolvedBy ? `Resolved by: ${c.resolvedBy}` : ''
+  const acquisition = isChangeOfOwnership(c.caseType)
 
-  return `Generate a complete Legal Referral Summary following the FAFO Pathway protocol (SUMMARY v1.0). The document must be counsel-ready and self-contained. Follow the exact 8-section structure below.
+  // The licence block and the acquisition block are mutually exclusive: an
+  // acquirer never held the licence, so reciting a term and fee it was not
+  // party to would misstate the relationship counsel has to plead.
+  const section1b = acquisition
+    ? `## 1b. Asset Acquisition / Change of Ownership
+[The acquisition that produced the unauthorised use: what was acquired, from whom, when, and what the acquirer did with the certified goods or marks afterwards. Draw only on the case data and correspondence above. Do NOT include licence term, licence fee, or licensed marks in this matter — the respondent never held the licence.]`
+    : `## 1b. License
+**Term:** [start and end dates, verbatim from the verified licence facts]
+**License Fee:** [annual fee, verbatim]
+**Marks Licensed:** [the marks under that licence, with USPTO numbers where supplied]
+[If no licence exists on record — an unlicensed party that was never certified — state that plainly and omit the three fields above rather than emitting blanks.]`
+
+  return `Generate a complete Legal Referral Summary following the FAFO Pathway protocol (SUMMARY v2.0). The document must be counsel-ready and self-contained. Follow the exact four-section structure below.
 
 CASE DATA:
 Complainant: Paleo Certified, Inc. dba The Paleo Foundation
 Complainant Contact: Jonathan D. Pendergrass, CLO | jonathand@paleofoundation.org | https://paleofoundation.com/
-Respondent: ${c.infringer}
-Respondent Contact: ${c.contact || 'Unknown'} | ${c.contactEmail || 'Unknown'}
+Infringing Party: ${c.infringer}
+Infringing Party Contact: ${c.contact || 'Unknown'} | ${c.contactEmail || 'Unknown'}
 Trademark(s): ${c.trademarkNames.join('; ')}
 Infringement Type: ${c.caseType}
 Source / Platform: ${c.source}
@@ -105,6 +163,9 @@ ${notesText || 'None recorded'}
 
 EVIDENCE ON FILE:
 ${evidenceText}
+
+SCREENSHOT EXHIBITS REPRODUCED IN THIS REFERRAL:
+${screenshotText}
 
 CORRESPONDENCE ON RECORD (dated, extracted from the documents above):
 ${correspondenceText}
@@ -124,6 +185,11 @@ Trademark Infringement Matter
 Paleo Certified, Inc. dba The Paleo Foundation v. ${c.infringer}
 Date of Referral: ${c.todayIso}
 
+DO NOT emit a protocol line, an internal case-opened date, a case-handler line,
+a referral-status line, or a classification line. The four header lines above are
+the entire header. Do not add sections, appendices or a table of contents beyond
+the four numbered sections specified below.
+
 EVIDENTIARY RULE — this document is relied on by outside counsel:
 Distinguish "not in the record provided" from "does not exist". Where a fact is
 absent from the case data above, write that it is not in the record and should be
@@ -133,60 +199,59 @@ data you were not given. Facts supplied above (licensee name, address, term date
 fee, evidence counts and dates) are extracted from source documents: reproduce them
 verbatim rather than inferring or restating them approximately.
 
-# 1. Parties
-## 1a. Licensor / Complainant
-[Full details]
-## 1b. Respondent
-[Full details from case data — infer jurisdiction and entity details from context where possible]
+# 1. Contact and License
+## 1a. Infringing Party
+**Entity Name:** [legal entity name]
+**Address:** [full address from the verified licence facts, verbatim]
+**Contact:** [named individual]
+**Email:** [email address]
+[These four fields only. Do not add jurisdiction, entity form, website, business
+description, or officers to this subsection.]
+${section1b}
 
-# 2. Background
-## 2a. Original License Agreement
-[Date, parties, signatory, key sections — infer from notes and type. If Expired License, detail the agreement. If Never Certified, note no agreement existed.]
-## 2b. License Expiration or Termination
-[Date and method — from notes]
-## 2c. Asset Acquisition / Change of Ownership (if applicable)
-[Include only if type is Change in Ownership — otherwise omit]
+# 2. Correspondence Timeline
+[A dated thread of the exchange between the parties, drawn from CORRESPONDENCE ON
+RECORD and the case notes. One entry per message: date, who sent it, and what it
+said. Include, where the record has them:
+ - renewal correspondence, and any notice that the licence was expiring;
+ - the licence expiry or termination date, and the date termination was sent;
+ - the respondent's stated intent to discontinue use, and the date given for it;
+ - every reply from the respondent, so counsel can see response times and gaps;
+ - anything after the licence ended that bears on liquidated damages or settlement,
+   including offers, counter-offers and silence following a demand.
+Exclude routine or administrative traffic that carries none of the above. Do not
+add flags, labels, tags or an editorial gloss to the entries — counsel draws the
+inferences. Give the timeline entries only.
+If no correspondence has been extracted into the record, say exactly that: state
+that the case documents have not yet been processed into dated entries, not that
+no correspondence exists.]
 
-# 3. Infringement
-## 3a. Nature and Duration
-[Start date, most recent confirmed use, total months]
-## 3b. Platforms and URLs
-[All platforms from source/URL fields and notes]
-## 3c. Standards Violations (if applicable)
-[If noted in case notes]
-## 3d. Evidence of Knowledge
-[Any relevant evidence of knowledge from notes]
+# 3. Evidence
+## 3a. Files on Record
+[Reproduce the EVIDENCE ON FILE block above: total, breakdown by kind,
+capture-session dates, and each named document. Add any URLs from the notes that
+were captured as evidence. Never omit this subsection. If the block states no
+files are indexed, say exactly that — do not infer that no evidence exists in the
+world.]
+## 3b. Screenshot Exhibits
+[One short line per exhibit listed in SCREENSHOT EXHIBITS above, in that order,
+giving the exhibit letter, the platform, the capture date, and what the capture
+shows — which mark appears, on what page or listing. Then end this subsection with
+the following marker alone on its own line, exactly as written, with nothing after
+it:
+${SCREENSHOT_MARKER}]
 
-# 4. Correspondence Timeline
-[Reconstruct from notes — one entry per note with date, sender, content summary. Flag: initial notice, first response, any broken representations, final pre-referral correspondence, any explicit invitation to escalate.]
-
-# 5. Defenses Raised and Rebuttals
-[Extract any defenses from notes. If none recorded, state "No formal defenses raised as of referral date."]
-
-# 6. Current Settlement Position
-## 6a. Options Presented
+# 4. Settlement Position
+## 4a. Options Presented
 [From settlement field — parse Option 1 / Option 2 if structured, otherwise present as stated]
-## 6b. Basis for Calculation
+## 4b. Basis for Calculation
 [From MASTER_REF pricing bands + duration. Calculate based on type and pricing band.]
-## 6c. Respondent's Stated Position
+## 4c. Respondent's Stated Position
 [From notes — accepted, rejected, or open]
-## 6d. Note to Counsel
+## 4d. Note to Counsel
 [Flag duration, breadth, willfulness if second infringement. Recommend upward revision if warranted.]
-
-# 7. Evidence on File
-[Reproduce the EVIDENCE ON FILE block above: total, breakdown by kind, capture-session dates, and each named document. Add any URLs from notes that were captured as evidence. Never omit this section. If the block states no files are indexed, say exactly that — do not infer that no evidence exists in the world.]
-
-# 8. Recommended Counsel Actions
-## 8a. Jurisdiction
-[Lanham Act §1114 + §1125(a) for U.S. If Canadian entity, note Canadian Trademarks Act RSC 1985 as applicable. Reference license jurisdiction clause.]
-## 8b. Liability Assessment
-[Individual vs entity. Signatory continuity if applicable.]
-## 8c. Available Remedies
-[Injunctive relief, damages, account of profits, delivery up, statutory damages]
-## 8d. Verification Actions
-[Standard checklist: full cessation across all platforms, Amazon/retail lag, cached/archived pages]
 
 ---
 Prepared by: Jonathan D. Pendergrass, CLO | The Paleo Foundation | jonathand@paleofoundation.org | ${c.todayIso}
-FAFO Workflow | Paleo Certified, Inc. dba The Paleo Foundation | Protocol: SUMMARY v1.0`
+FAFO Workflow | Paleo Certified, Inc. dba The Paleo Foundation`
 }

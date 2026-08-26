@@ -4,9 +4,12 @@ import { AMANDA_SYSTEM_PROMPT, buildAmandaUserPrompt } from '../../shared/domain
 import {
   SUMMARY_SYSTEM_PROMPT,
   buildSummaryUserPrompt,
-  type EvidenceManifest
+  SCREENSHOT_MARKER,
+  type EvidenceManifest,
+  type ScreenshotExhibit
 } from '../../shared/domain/summaryPrompt'
 import { nextResponseThursday, selloffEnd } from '../../shared/domain/deadlines'
+import { selectReferralScreenshots } from './referralShots'
 
 /**
  * Letter generation (M4). The prompts are the verbatim v1 AMANDA and
@@ -291,6 +294,8 @@ export async function generateLetter(
   const i = caseInputs(db, caseId)
   const client = new Anthropic({ apiKey })
   const today = new Date().toISOString().slice(0, 10)
+  // Chosen now, not at export: the drafted prose cites these exhibit letters.
+  const shots = kind === 'enforcement' ? [] : selectReferralScreenshots(db, caseId)
 
   const request =
     kind === 'enforcement'
@@ -326,7 +331,8 @@ export async function generateLetter(
             evidence: i.evidence,
             correspondence: i.correspondence,
             deadlines: i.deadlines,
-            payments: i.payments
+            payments: i.payments,
+            screenshots: shots
           }),
           maxTokens: 8000
         }
@@ -348,10 +354,11 @@ export async function generateLetter(
   const id = Number(
     db
       .prepare(
-        `INSERT INTO letters (case_id, kind, body_text, drafted_at, status)
-         VALUES (?, ?, ?, ?, 'draft')`
+        `INSERT INTO letters (case_id, kind, body_text, drafted_at, status, exhibits_json)
+         VALUES (?, ?, ?, ?, 'draft', ?)`
       )
-      .run(caseId, kind, text, today).lastInsertRowid
+      .run(caseId, kind, text, today, shots.length ? JSON.stringify(shots) : null)
+      .lastInsertRowid
   )
   return getLetter(db, id)
 }
@@ -365,6 +372,20 @@ export function getLetter(db: Database.Database, id: number): LetterRow {
        FROM letters WHERE id = ?`
     )
     .get(id) as LetterRow
+}
+
+/** The captures this letter's prose cites, frozen when it was drafted. */
+export function letterExhibits(db: Database.Database, letterId: number): ScreenshotExhibit[] {
+  const row = db.prepare('SELECT exhibits_json AS json FROM letters WHERE id = ?').get(letterId) as
+    | { json: string | null }
+    | undefined
+  if (!row?.json) return []
+  try {
+    const parsed = JSON.parse(row.json)
+    return Array.isArray(parsed) ? (parsed as ScreenshotExhibit[]) : []
+  } catch {
+    return []
+  }
 }
 
 export function listLetters(db: Database.Database, caseId: number): LetterRow[] {
@@ -412,6 +433,23 @@ export function markLetterSent(db: Database.Database, letterId: number): LetterR
 const NAVY = '#26366C'
 const SLATE = '#2B3540'
 
+
+/**
+ * Swap the drafter's marker for one placeholder line per exhibit, so the
+ * renderer can turn each into an image the Docs service will fetch and inline.
+ */
+function placeExhibits(bodyText: string, exhibits: ScreenshotExhibit[]): string {
+  if (exhibits.length === 0) return bodyText.split(SCREENSHOT_MARKER).join('')
+  const block = exhibits.map((e) => `@@IMG:${e.label}@@`).join('\n')
+  if (bodyText.includes(SCREENSHOT_MARKER)) {
+    return bodyText.split(SCREENSHOT_MARKER).join(block)
+  }
+  const lines = bodyText.split('\n')
+  const settlement = lines.findIndex((l) => /^#\s*4\./.test(l.trim()))
+  if (settlement === -1) return `${bodyText}\n\n${block}`
+  return [...lines.slice(0, settlement), block, '', ...lines.slice(settlement)].join('\n')
+}
+
 /**
  * Markdown → branded HTML for the docs-mcp renderer.
  *
@@ -420,7 +458,11 @@ const SLATE = '#2B3540'
  * literal "#" characters in the Google Doc. Verified against the v1 output in
  * Drive: Cases/Zint Nutrition/FAFO Legal Referral Summary — MCB Star LLC.
  */
-export function letterToHtml(title: string, bodyText: string): string {
+export function letterToHtml(
+  title: string,
+  bodyText: string,
+  exhibits: ScreenshotExhibit[] = []
+): string {
   const esc = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const inline = (s: string): string =>
@@ -432,13 +474,18 @@ export function letterToHtml(title: string, bodyText: string): string {
     `<h1 style="font-family:Georgia,serif;color:${NAVY};border-bottom:2px solid ${NAVY}">${esc(title)}</h1>`
   ]
   let paragraph: string[] = []
+
+  // The drafter is told to close §3b with the marker. If it dropped the line —
+  // or an older letter predates the convention — the captures still have to
+  // reach counsel, so they go in ahead of §4 rather than nowhere.
+  const source = placeExhibits(bodyText, exhibits)
   const flush = (): void => {
     if (paragraph.length === 0) return
     out.push(`<p>${paragraph.map(inline).join('<br/>')}</p>`)
     paragraph = []
   }
 
-  for (const line of bodyText.split('\n')) {
+  for (const line of source.split('\n')) {
     const t = line.trim()
     if (t === '') {
       flush()
@@ -462,6 +509,20 @@ export function letterToHtml(title: string, bodyText: string): string {
         out.push(`<h2 style="font-family:Georgia,serif;color:${SLATE}">${body}</h2>`)
       } else {
         out.push(`<h3 style="color:${SLATE}">${body}</h3>`)
+      }
+      continue
+    }
+    const exhibit = t.match(/^@@IMG:(.+)@@$/)
+    if (exhibit) {
+      flush()
+      const ex = exhibits.find((e) => e.label === exhibit[1])
+      out.push(`<img data-fafo-image="${esc(exhibit[1]!)}">`)
+      if (ex) {
+        const where = ex.platform ? `${ex.platform}, ` : ''
+        const when = ex.date ? `captured ${ex.date}` : 'capture date not recorded'
+        out.push(
+          `<p style="color:${SLATE}"><em>Exhibit ${esc(ex.label)} — ${esc(where)}${esc(when)}</em></p>`
+        )
       }
       continue
     }

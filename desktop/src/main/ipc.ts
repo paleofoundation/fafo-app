@@ -48,10 +48,12 @@ import { extractionCounts, runExtraction } from './services/ingest/extractionRun
 import {
   generateLetter,
   getLetter,
+  letterExhibits,
   letterToHtml,
   listLetters,
   markLetterSent
 } from './services/letters'
+import { encodeExhibits } from './services/referralShots'
 import { createBrandedDoc } from './services/docsMcp'
 import { scanMail } from './services/graphMail'
 import { quoteSettlement } from './services/settlement'
@@ -236,7 +238,21 @@ export function registerIpc(): void {
     ) as { title: string; folderId: string | null }
     const label = letter.kind === 'enforcement' ? 'Enforcement Letter' : 'Legal Referral Summary'
     const title = `FAFO ${label} — ${c.title} ${letter.draftedAt}`
-    const doc = await createBrandedDoc(title, letterToHtml(title, letter.bodyText), c.folderId)
+    // Encoded at export, selected at drafting: the bytes are only needed now,
+    // but which captures they are was settled when the prose cited them.
+    const encoded = await encodeExhibits(letterExhibits(db, letterId))
+    const doc = await createBrandedDoc(
+      title,
+      letterToHtml(title, letter.bodyText, encoded),
+      c.folderId,
+      encoded.map((e) => ({
+        id: e.label,
+        dataBase64: e.dataBase64,
+        mimeType: e.mimeType,
+        widthPt: e.widthPt,
+        heightPt: e.heightPt
+      }))
+    )
     const url = doc.editUrl ?? doc.pdfUrl
     if (url) {
       db.prepare('UPDATE letters SET doc_drive_id = ? WHERE id = ?').run(url, letterId)

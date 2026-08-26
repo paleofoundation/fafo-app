@@ -211,7 +211,7 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
     expect(p).toContain('Second infringement')
   })
 
-  it('SUMMARY prompt contains all 8 required sections', () => {
+  it('SUMMARY prompt contains the four v2.0 sections and none of the cut ones', () => {
     const p = buildSummaryUserPrompt({
       infringer: 'Little West (WS West LLC)',
       contact: null,
@@ -235,21 +235,62 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       },
       correspondence: [],
       deadlines: [],
-      payments: []
+      payments: [],
+      screenshots: []
     })
     for (const section of [
-      '# 1. Parties',
-      '# 2. Background',
-      '# 3. Infringement',
-      '# 4. Correspondence Timeline',
-      '# 5. Defenses Raised and Rebuttals',
-      '# 6. Current Settlement Position',
-      '# 7. Evidence on File',
-      '# 8. Recommended Counsel Actions'
+      '# 1. Contact and License',
+      '## 1a. Infringing Party',
+      '# 2. Correspondence Timeline',
+      '# 3. Evidence',
+      '# 4. Settlement Position'
     ]) {
       expect(p).toContain(section)
     }
-    expect(p).toContain('Protocol: SUMMARY v1.0')
+    for (const cut of [
+      '# 2. Background',
+      '# 3. Infringement',
+      'Defenses Raised',
+      'Recommended Counsel Actions',
+      'Licensor / Complainant',
+      'Protocol: SUMMARY'
+    ]) {
+      expect(p).not.toContain(cut)
+    }
+  })
+
+  it('gives a licence its term and fee, and an acquisition neither', () => {
+    const base = {
+      infringer: 'Acme', contact: null, contactEmail: null,
+      trademarkNames: ['CERTIFIED P PALEO'], source: 'Website', url: null,
+      dateOpened: '2025-01-01', todayIso: '2026-08-26', settlement: null,
+      resolvedBy: null, notes: [], correspondence: [], deadlines: [],
+      payments: [], screenshots: [],
+      evidence: { total: 0, byKind: [], documents: [], captureSessions: [], earliest: null, latest: null }
+    }
+    const expired = buildSummaryUserPrompt({ ...base, caseType: 'Expired License' })
+    expect(expired).toContain('## 1b. License')
+    expect(expired).toContain('**License Fee:**')
+    expect(expired).not.toContain('Asset Acquisition')
+
+    const acquired = buildSummaryUserPrompt({
+      ...base, caseType: 'Unlicensed Use - Change in Ownership'
+    })
+    expect(acquired).toContain('## 1b. Asset Acquisition / Change of Ownership')
+    expect(acquired).not.toContain('**License Fee:**')
+  })
+
+  it('tells the drafter to leave the timeline unflagged and unglossed', () => {
+    const p = buildSummaryUserPrompt({
+      infringer: 'Acme', contact: null, contactEmail: null,
+      trademarkNames: [], caseType: 'Expired License', source: 'Website', url: null,
+      dateOpened: '2025-01-01', todayIso: '2026-08-26', settlement: null,
+      resolvedBy: null, notes: [], correspondence: [], deadlines: [],
+      payments: [], screenshots: [],
+      evidence: { total: 0, byKind: [], documents: [], captureSessions: [], earliest: null, latest: null }
+    })
+    expect(p).toContain('add flags, labels, tags or an editorial gloss')
+    expect(p).toContain('DO NOT emit a protocol line')
   })
 })
 
@@ -303,12 +344,17 @@ describe('referral evidence manifest', () => {
       evidence: manifest,
       correspondence: ['[2026-04-15] (email) Kennedy Velikonja: renewal under internal review.'],
       deadlines: ['[due 2026-10-18] (selloff end) Awake Chocolate — sell-off window closes'],
-      payments: []
+      payments: [],
+      screenshots: [
+        { label: 'A', path: '/x/Amazon/Screenshot 2026-08-05 at 6.53.27 PM.png',
+          fileName: 'Screenshot 2026-08-05 at 6.53.27 PM.png', platform: 'Amazon', date: '2026-08-05' }
+      ]
     })
     expect(p).toContain('43 files indexed')
     expect(p).toContain('Kennedy Velikonja')
     expect(p).toContain('sell-off window closes')
     // The rule that keeps counsel from being told a gap exists that does not.
     expect(p).toContain('not in the record provided')
+    expect(p).toContain('Exhibit A — Amazon, 2026-08-05')
   })
 })

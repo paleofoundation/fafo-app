@@ -252,6 +252,15 @@ const MIGRATIONS: string[] = [
   ALTER TABLE evidence_files ADD COLUMN extracted_at TEXT;
   ALTER TABLE evidence_files ADD COLUMN extraction_note TEXT;
   CREATE INDEX idx_evidence_extracted ON evidence_files(kind, extracted_at);
+  `,
+
+  // 007 — the screenshot exhibits a referral cites, frozen at drafting time.
+  // The letter's prose names "Exhibit C"; re-deriving the selection at export
+  // would silently repoint that letter if the case folder gained a capture in
+  // between. Stored as JSON because it is an immutable record of one document,
+  // never queried across letters.
+  `
+  ALTER TABLE letters ADD COLUMN exhibits_json TEXT;
   `
 ]
 

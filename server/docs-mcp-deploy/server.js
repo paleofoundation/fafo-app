@@ -16,9 +16,10 @@
 const crypto = require("crypto");
 const express = require("express");
 const { google } = require("googleapis");
+const { Readable } = require("stream");
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "25mb" }));
 
 const CASES_FOLDER_ID = process.env.CASES_FOLDER_ID || "1IiHLmNCNjk0e8LZTF_1LaSxDaIiuf-PZ";
 
@@ -138,9 +139,14 @@ function parseHtml(html) {
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<body[^>]*>/gi, "").replace(/<\/body>/gi, "");
   const tokens = [];
-  const blockRe = /<(h[1-3]|p|li|hr)[^>]*>([\s\S]*?)<\/\1>|<hr\s*\/?>/gi;
+  const blockRe = /<(h[1-3]|p|li|hr)[^>]*>([\s\S]*?)<\/\1>|<hr\s*\/?>|<img[^>]*>/gi;
   let m;
   while ((m = blockRe.exec(body)) !== null) {
+    if (m[0].toLowerCase().startsWith("<img")) {
+      const idAttr = m[0].match(/data-fafo-image="([^"]+)"/i);
+      if (idAttr) tokens.push({ tag: "image", imageId: idAttr[1] });
+      continue;
+    }
     const tag = (m[1] || "hr").toLowerCase();
     if (tag === "hr") { tokens.push({ tag: "hr" }); continue; }
     const inlines = parseInlines(m[2] || "");
@@ -151,11 +157,32 @@ function parseHtml(html) {
   return tokens;
 }
 
-function buildRequests(tokens) {
+function buildRequests(tokens, staged) {
+  const images = staged || {};
   const requests = [];
   let idx = 1;
   const styleQueue = [];
   for (const token of tokens) {
+    if (token.tag === "image") {
+      const img = images[token.imageId];
+      // A capture that could not be staged degrades to a text line rather than
+      // taking the whole referral down with it.
+      if (!img) {
+        const note = "[Exhibit " + token.imageId + " — image unavailable]\n";
+        requests.push({ insertText: { location: { index: idx }, text: note } });
+        idx += note.length; continue;
+      }
+      const objectSize = {};
+      if (img.widthPt)  objectSize.width  = { magnitude: img.widthPt,  unit: "PT" };
+      if (img.heightPt) objectSize.height = { magnitude: img.heightPt, unit: "PT" };
+      requests.push({ insertInlineImage: { location: { index: idx }, uri: img.uri,
+        ...(objectSize.width ? { objectSize } : {}) } });
+      styleQueue.push({ type: "imageAlign", startIndex: idx, endIndex: idx + 2 });
+      idx += 1;
+      requests.push({ insertText: { location: { index: idx }, text: "\n" } });
+      idx += 1;
+      continue;
+    }
     if (token.tag === "hr") {
       requests.push({ insertText: { location: { index: idx }, text: "\n" } });
       styleQueue.push({ type: "border", startIndex: idx, endIndex: idx + 1 });
@@ -172,6 +199,12 @@ function buildRequests(tokens) {
     idx += blockText.length;
   }
   for (const s of styleQueue) {
+    if (s.type === "imageAlign") {
+      requests.push({ updateParagraphStyle: { range: { startIndex: s.startIndex, endIndex: s.endIndex },
+        paragraphStyle: { alignment: "CENTER", spaceAbove: { magnitude: 10, unit: "PT" },
+          spaceBelow: { magnitude: 2, unit: "PT" } },
+        fields: "alignment,spaceAbove,spaceBelow" } }); continue;
+    }
     if (s.type === "border") {
       requests.push({ updateParagraphStyle: { range: { startIndex: s.startIndex, endIndex: s.endIndex },
         paragraphStyle: { borderBottom: { color: { color: { rgbColor: COLORS.divider } }, dashStyle: "SOLID",
@@ -229,7 +262,52 @@ function buildRequests(tokens) {
   return requests;
 }
 
-async function createDoc(title, html, folderId, userToken) {
+
+/**
+ * Google's Docs backend fetches an image by URL at insert time and copies the
+ * bytes into the document, so the source only has to be reachable for the
+ * duration of the batchUpdate. Each capture is therefore uploaded to Drive,
+ * shared by link, inserted, and then unshared and removed — the originals live
+ * in the case folder on the user's machine, and these are staging copies with a
+ * lifetime of a few seconds.
+ *
+ * Google has changed the public-file endpoint more than once; this form is the
+ * one verified against the Docs fetcher (see server/README.md). If it ever
+ * stops resolving, the symptom is a 400 "Invalid image URL" from batchUpdate.
+ */
+const IMAGE_URL = (fileId) => "https://lh3.googleusercontent.com/d/" + fileId;
+
+async function stageImages(drive, images, folderId) {
+  const staged = {};
+  const fileIds = [];
+  for (const img of images) {
+    if (!img || !img.id || !img.dataBase64) continue;
+    const bytes = Buffer.from(img.dataBase64, "base64");
+    const res = await drive.files.create({
+      requestBody: { name: "fafo-exhibit-" + img.id + ".jpg", parents: [folderId] },
+      media: { mimeType: img.mimeType || "image/jpeg", body: Readable.from(bytes) },
+      fields: "id",
+    });
+    const fileId = res.data.id;
+    fileIds.push(fileId);
+    await drive.permissions.create({
+      fileId, requestBody: { role: "reader", type: "anyone" },
+    });
+    staged[img.id] = { uri: IMAGE_URL(fileId), widthPt: img.widthPt, heightPt: img.heightPt };
+  }
+  return { staged, fileIds };
+}
+
+async function unstageImages(drive, fileIds) {
+  for (const fileId of fileIds) {
+    // Scoped to files this same request created moments ago — never a caller
+    // supplied id, which is why no delete endpoint is exposed.
+    try { await drive.files.delete({ fileId }); }
+    catch (e) { console.warn("staging cleanup failed for " + fileId + ":", e.message); }
+  }
+}
+
+async function createDoc(title, html, folderId, userToken, images) {
   const targetFolder = folderId || CASES_FOLDER_ID;
   const { drive, docs } = await getClients(userToken);
   const createRes = await drive.files.create({
@@ -248,10 +326,23 @@ async function createDoc(title, html, folderId, userToken) {
     });
   } catch(e) { console.warn("Ownership transfer failed:", e.message); }
   const tokens = parseHtml(html);
-  const requests = buildRequests(tokens);
-  const CHUNK = 200;
-  for (let i = 0; i < requests.length; i += CHUNK) {
-    await docs.documents.batchUpdate({ documentId: fileId, requestBody: { requests: requests.slice(i, i + CHUNK) } });
+  let staged = {}, stagedIds = [];
+  if (Array.isArray(images) && images.length) {
+    try {
+      const r = await stageImages(drive, images, targetFolder);
+      staged = r.staged; stagedIds = r.fileIds;
+    } catch (e) {
+      console.warn("image staging failed, rendering text placeholders:", e.message);
+    }
+  }
+  try {
+    const requests = buildRequests(tokens, staged);
+    const CHUNK = 200;
+    for (let i = 0; i < requests.length; i += CHUNK) {
+      await docs.documents.batchUpdate({ documentId: fileId, requestBody: { requests: requests.slice(i, i + CHUNK) } });
+    }
+  } finally {
+    await unstageImages(drive, stagedIds);
   }
   return { ok: true, fileId, editUrl: createRes.data.webViewLink,
     pdfUrl: "https://docs.google.com/document/d/" + fileId + "/export?format=pdf",
@@ -260,10 +351,10 @@ async function createDoc(title, html, folderId, userToken) {
 
 app.post("/create-doc", requireKey, async (req, res) => {
   try {
-    const { title, html, folderId } = req.body;
+    const { title, html, folderId, images } = req.body;
     const userToken = req.headers["x-user-token"] || null;
     if (!title || !html) return res.status(400).json({ error: "title and html required" });
-    res.json(await createDoc(title, html, folderId, userToken));
+    res.json(await createDoc(title, html, folderId, userToken, images));
   } catch (err) {
     console.error("/create-doc error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
@@ -385,3 +476,7 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log("FAFO Docs MCP v2 listening on port " + PORT));
+
+// Exported for offline verification of the index arithmetic (see
+// server/docs-mcp-deploy/check-requests.js). Not used by the service itself.
+module.exports = { parseHtml, buildRequests };

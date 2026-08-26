@@ -32,6 +32,35 @@ describe('letterToHtml (branded Drive export)', () => {
   })
 })
 
+describe('screenshot exhibits in the exported document', () => {
+  const shots = [
+    { label: 'A', path: '/c/Amazon/s.png', fileName: 's.png', platform: 'Amazon', date: '2026-08-05' },
+    { label: 'B', path: '/c/Website/t.png', fileName: 't.png', platform: 'Website', date: null }
+  ]
+
+  it('replaces the drafter marker with one image per exhibit, captioned', () => {
+    const html = letterToHtml('R', '# 3. Evidence\n[[FAFO:SCREENSHOTS]]\n# 4. Settlement Position', shots)
+    expect(html).toContain('<img data-fafo-image="A">')
+    expect(html).toContain('<img data-fafo-image="B">')
+    expect(html).toContain('Exhibit A — Amazon, captured 2026-08-05')
+    // A capture with no recoverable date says so rather than inventing one.
+    expect(html).toContain('Exhibit B — Website, capture date not recorded')
+    expect(html).not.toContain('FAFO:SCREENSHOTS')
+  })
+
+  it('still places the captures ahead of §4 when the drafter dropped the marker', () => {
+    const html = letterToHtml('R', '# 3. Evidence\nText.\n# 4. Settlement Position\nTerms.', shots)
+    expect(html.indexOf('data-fafo-image="A"')).toBeGreaterThan(html.indexOf('3. Evidence'))
+    expect(html.indexOf('data-fafo-image="A"')).toBeLessThan(html.indexOf('4. Settlement Position'))
+  })
+
+  it('leaves no marker text in the document when there are no captures', () => {
+    const html = letterToHtml('R', '# 3. Evidence\n[[FAFO:SCREENSHOTS]]\nText.', [])
+    expect(html).not.toContain('FAFO:SCREENSHOTS')
+    expect(html).not.toContain('<img')
+  })
+})
+
 describe('licenseFactsBlock', () => {
   let db: Database.Database
 
