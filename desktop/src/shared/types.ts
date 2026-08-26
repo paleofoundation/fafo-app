@@ -739,6 +739,8 @@ export interface FafoApi {
   markLetterSent(letterId: number): Promise<LetterView>
   exportLetterToDrive(letterId: number): Promise<LetterView>
   saveLetterToFile(letterId: number): Promise<string | null>
+  /** Render the letter to a PDF locally — no Drive, captures embedded. */
+  saveLetterToPdf(letterId: number): Promise<string | null>
   scanMailNow(): Promise<MailScanResult>
   quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
   /** Opens a file picker; returns null if cancelled. Read-only dry run. */

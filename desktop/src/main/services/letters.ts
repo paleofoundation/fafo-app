@@ -461,7 +461,13 @@ function placeExhibits(bodyText: string, exhibits: ScreenshotExhibit[]): string 
 export function letterToHtml(
   title: string,
   bodyText: string,
-  exhibits: ScreenshotExhibit[] = []
+  exhibits: ScreenshotExhibit[] = [],
+  /**
+   * How the captures reach the page. The Docs service stages each image to
+   * Drive itself and only needs the marker attribute; a local HTML or PDF file
+   * has no service behind it, so the bytes ride inline.
+   */
+  images: 'marker' | 'inline' = 'marker'
 ): string {
   const esc = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -470,9 +476,15 @@ export function letterToHtml(
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[\s(])\*(?!\s)(.+?)(?<!\s)\*/g, '$1<em>$2</em>')
 
-  const out: string[] = [
-    `<h1 style="font-family:Georgia,serif;color:${NAVY};border-bottom:2px solid ${NAVY}">${esc(title)}</h1>`
-  ]
+  // SUMMARY v2.0 opens with its own "# LEGAL REFERRAL SUMMARY" heading, so
+  // prepending the document title stacked two bordered H1s on the first page.
+  // Only supply a title heading when the body does not already start with one.
+  const startsWithHeading = /^\s*#\s+\S/.test(bodyText)
+  const out: string[] = startsWithHeading
+    ? []
+    : [
+        `<h1 style="font-family:Georgia,serif;color:${NAVY};border-bottom:2px solid ${NAVY}">${esc(title)}</h1>`
+      ]
   let paragraph: string[] = []
 
   // The drafter is told to close §3b with the marker. If it dropped the line —
@@ -516,7 +528,14 @@ export function letterToHtml(
     if (exhibit) {
       flush()
       const ex = exhibits.find((e) => e.label === exhibit[1])
-      out.push(`<img data-fafo-image="${esc(exhibit[1]!)}">`)
+      const bytes = (ex as { dataBase64?: string } | undefined)?.dataBase64
+      if (images === 'inline' && bytes) {
+        out.push(
+          `<img class="exhibit" alt="Exhibit ${esc(exhibit[1]!)}" src="data:image/jpeg;base64,${bytes}">`
+        )
+      } else {
+        out.push(`<img data-fafo-image="${esc(exhibit[1]!)}">`)
+      }
       if (ex) {
         const where = ex.platform ? `${ex.platform}, ` : ''
         const when = ex.date ? `captured ${ex.date}` : 'capture date not recorded'

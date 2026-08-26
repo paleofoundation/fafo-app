@@ -54,6 +54,7 @@ import {
   markLetterSent
 } from './services/letters'
 import { encodeExhibits } from './services/referralShots'
+import { letterToDocument, letterToPdf } from './services/letterPdf'
 import { createBrandedDoc } from './services/docsMcp'
 import { scanMail } from './services/graphMail'
 import { quoteSettlement } from './services/settlement'
@@ -271,24 +272,47 @@ export function registerIpc(): void {
    * the app because of that, so this path shares the same branded rendering
    * and never touches the network.
    */
-  ipcMain.handle('fafo:saveLetterToFile', async (_e, letterId: number) => {
+  /**
+   * Save a letter locally, as a self-contained HTML document or a PDF.
+   *
+   * Both carry the captures inline and neither touches Drive — a referral is
+   * the one document that must still come out when the Google token has
+   * expired, which it now has twice.
+   */
+  const saveLetterLocally = async (letterId: number, format: 'html' | 'pdf') => {
     const letter = getLetter(db, letterId)
     if (!letter) throw new Error(`Letter ${letterId} not found`)
-    const c = db.prepare('SELECT title FROM cases WHERE id = ?').get(letter.caseId) as {
-      title: string
-    }
+    const c = db
+      .prepare('SELECT title, local_folder_path AS folder FROM cases WHERE id = ?')
+      .get(letter.caseId) as { title: string; folder: string | null }
     const label = letter.kind === 'enforcement' ? 'Enforcement Letter' : 'Legal Referral Summary'
     const title = `FAFO ${label} — ${c.title} ${letter.draftedAt}`
-    const suggested = `${safeFilename(title)}.html`
+    const exhibits = await encodeExhibits(letterExhibits(db, letterId))
 
+    // Default into the case's own folder when FAFO knows it — that is where
+    // the rest of the matter already lives.
+    const dir =
+      c.folder && fs.existsSync(c.folder) ? c.folder : app.getPath('downloads')
     const picked = await dialog.showSaveDialog({
       title: `Save ${label}`,
-      defaultPath: path.join(app.getPath('downloads'), suggested),
-      filters: [{ name: 'HTML document', extensions: ['html'] }]
+      defaultPath: path.join(dir, `${safeFilename(title)}.${format}`),
+      filters: [
+        format === 'pdf'
+          ? { name: 'PDF document', extensions: ['pdf'] }
+          : { name: 'HTML document', extensions: ['html'] }
+      ]
     })
     if (picked.canceled || !picked.filePath) return null
 
-    fs.writeFileSync(picked.filePath, letterToHtml(title, letter.bodyText), 'utf8')
+    if (format === 'pdf') {
+      fs.writeFileSync(picked.filePath, await letterToPdf(title, letter.bodyText, exhibits))
+    } else {
+      fs.writeFileSync(
+        picked.filePath,
+        letterToDocument(title, letter.bodyText, exhibits),
+        'utf8'
+      )
+    }
     db.prepare("INSERT INTO case_events (case_id, at, kind, body) VALUES (?, ?, 'note', ?)").run(
       letter.caseId,
       new Date().toISOString().slice(0, 10),
@@ -296,7 +320,14 @@ export function registerIpc(): void {
     )
     shell.showItemInFolder(picked.filePath)
     return picked.filePath
-  })
+  }
+
+  ipcMain.handle('fafo:saveLetterToFile', (_e, letterId: number) =>
+    saveLetterLocally(letterId, 'html')
+  )
+  ipcMain.handle('fafo:saveLetterToPdf', (_e, letterId: number) =>
+    saveLetterLocally(letterId, 'pdf')
+  )
   ipcMain.handle('fafo:scanMailNow', async () => scanMail(db, await msAccessToken(db)))
   ipcMain.handle('fafo:quoteSettlement', (_e, caseId: number, observedUseThrough?: string) =>
     quoteSettlement(db, caseId, observedUseThrough)

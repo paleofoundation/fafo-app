@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from '../../db/migrations'
 import { seedIfEmpty } from '../../db/seed'
 import { letterToHtml, licenseFactsBlock } from '../letters'
+import { letterToDocument } from '../letterPdf'
 
 describe('letterToHtml (branded Drive export)', () => {
   it('renders SUMMARY markdown headings as real headings, not literal #', () => {
@@ -29,6 +30,35 @@ describe('letterToHtml (branded Drive export)', () => {
     const html = letterToHtml('Letter', 'Dear Counsel,\nLine two.\n\nRegards,')
     expect(html).toContain('<p>Dear Counsel,<br/>Line two.</p>')
     expect(html).toContain('<p>Regards,</p>')
+  })
+})
+
+describe('document title', () => {
+  it('does not repeat a heading the body already opens with', () => {
+    const html = letterToHtml('FAFO Legal Referral Summary — Acme', '# LEGAL REFERRAL SUMMARY\nBody.')
+    expect(html.match(/<h1/g)).toHaveLength(1)
+    expect(html).toContain('LEGAL REFERRAL SUMMARY')
+  })
+
+  it('supplies one when the body has no heading of its own', () => {
+    const html = letterToHtml('Enforcement Letter — Acme', 'Dear Counsel,\nBody.')
+    expect(html).toContain('Enforcement Letter — Acme')
+    expect(html.match(/<h1/g)).toHaveLength(1)
+  })
+})
+
+describe('local PDF/HTML document', () => {
+  it('is self-contained: no external asset of any kind', () => {
+    const doc = letterToDocument('R', '# R\n[[FAFO:SCREENSHOTS]]', [
+      { label: 'A', path: '/c/Amazon/s.png', fileName: 's.png', platform: 'Amazon',
+        date: '2026-08-05', dataBase64: 'QUJD', mimeType: 'image/jpeg' as const,
+        widthPt: 468, heightPt: 300 }
+    ])
+    expect(doc).toContain('<!doctype html>')
+    expect(doc).toContain('src="data:image/jpeg;base64,QUJD"')
+    // Anything fetched at open time would break for counsel reading it offline.
+    expect(doc).not.toMatch(/src="https?:|href="https?:|@import/)
+    expect(doc).toContain('Exhibit A — Amazon, captured 2026-08-05')
   })
 })
 

@@ -1,0 +1,106 @@
+/**
+ * Local PDF and standalone-HTML rendering for letters and referrals.
+ *
+ * The Drive path renders true brand styling through Google Docs, but it needs a
+ * live Cloud Run service and a Google refresh token that has now expired twice.
+ * A referral going to outside counsel should not be hostage to either, so this
+ * renders the same branded markup through Chromium instead: Georgia and Calibri
+ * are present on macOS, so fidelity holds, and the captures ride inline as
+ * data URIs rather than being staged anywhere.
+ */
+
+import fs from 'node:fs'
+import path from 'node:path'
+import { letterToHtml } from './letters'
+import type { EncodedExhibit } from './referralShots'
+
+const NAVY = '#26366C'
+const SLATE = '#2B3540'
+
+/** US Letter with one-inch margins, matching the Docs template. */
+const PAGE_CSS = `
+  @page { size: Letter; margin: 1in; }
+  body {
+    font-family: Calibri, "Avenir Next", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt; line-height: 1.45; color: ${SLATE};
+    margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  h1 { font-family: Georgia, serif; font-size: 22pt; font-weight: normal; color: ${NAVY};
+       border-bottom: 2px solid ${NAVY}; padding-bottom: 4pt;
+       margin: 20pt 0 6pt; break-after: avoid; }
+  h1:first-of-type { margin-top: 0; }
+  h2 { font-family: Georgia, serif; font-size: 16pt; font-weight: normal; color: ${NAVY};
+       margin: 16pt 0 4pt; break-after: avoid; }
+  h3 { font-size: 12pt; font-weight: bold; color: ${SLATE}; margin: 10pt 0 2pt; break-after: avoid; }
+  p { margin: 0 0 6pt; }
+  ul { margin: 0 0 6pt 0; padding-left: 18pt; }
+  hr { border: none; border-bottom: 0.5pt solid ${NAVY}; margin: 8pt 0; }
+  /* A capture must not be split across a page boundary, and must stay with the
+     caption that dates it — an undated exhibit proves nothing. Capped at 3.4in
+     tall so two exhibits and their captions fit on a page: unconstrained, a
+     1600px capture renders 4.2in tall and each one claimed a page of its own,
+     with half of it blank. At that size a 1600px source still resolves near
+     300dpi, so nothing is lost when counsel zooms in. */
+  img.exhibit { display: block; max-width: 100%; max-height: 3.4in; width: auto; height: auto;
+                margin: 10pt auto 2pt; break-inside: avoid; page-break-inside: avoid; }
+  img.exhibit + p { text-align: center; font-size: 9pt; color: ${SLATE};
+                    break-before: avoid; page-break-before: avoid; }
+`
+
+/** A complete, self-contained HTML document — no external assets of any kind. */
+export function letterToDocument(
+  title: string,
+  bodyText: string,
+  exhibits: EncodedExhibit[] = []
+): string {
+  const esc = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>${esc(title)}</title>
+<style>${PAGE_CSS}</style>
+</head><body>
+${letterToHtml(title, bodyText, exhibits, 'inline')}
+</body></html>`
+}
+
+/**
+ * Render to PDF bytes.
+ *
+ * The document goes through a temp file rather than a data: URL because
+ * Chromium caps data-URL length and an exhibit set runs to megabytes. The
+ * window is destroyed and the temp file removed even when printing throws.
+ */
+export async function letterToPdf(
+  title: string,
+  bodyText: string,
+  exhibits: EncodedExhibit[] = []
+): Promise<Buffer> {
+  // Imported here rather than at module scope so letterToDocument stays
+  // loadable — and testable — outside a running Electron app.
+  const { BrowserWindow, app } = await import('electron')
+  const tmp = path.join(
+    app.getPath('temp'),
+    `fafo-print-${process.pid}-${Math.random().toString(36).slice(2)}.html`
+  )
+  fs.writeFileSync(tmp, letterToDocument(title, bodyText, exhibits), 'utf8')
+
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
+  })
+  try {
+    await win.loadFile(tmp)
+    // did-finish-load fires before webfont layout settles; printing early
+    // reflows the document in the PDF.
+    await win.webContents.executeJavaScript('document.fonts.ready.then(() => true)')
+    return await win.webContents.printToPDF({
+      pageSize: 'Letter',
+      printBackground: true,
+      margins: { top: 1, bottom: 1, left: 1, right: 1 }
+    })
+  } finally {
+    if (!win.isDestroyed()) win.destroy()
+    fs.rmSync(tmp, { force: true })
+  }
+}
