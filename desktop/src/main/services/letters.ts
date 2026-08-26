@@ -1,7 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type Database from 'better-sqlite3'
 import { AMANDA_SYSTEM_PROMPT, buildAmandaUserPrompt } from '../../shared/domain/amandaPrompts'
-import { SUMMARY_SYSTEM_PROMPT, buildSummaryUserPrompt } from '../../shared/domain/summaryPrompt'
+import {
+  SUMMARY_SYSTEM_PROMPT,
+  buildSummaryUserPrompt,
+  type EvidenceManifest
+} from '../../shared/domain/summaryPrompt'
 import { nextResponseThursday, selloffEnd } from '../../shared/domain/deadlines'
 
 /**
@@ -27,6 +31,85 @@ export interface LetterRow {
   status: string
 }
 
+
+/**
+ * What the case actually holds, for the referral's evidence section.
+ *
+ * Screenshots are grouped into dated capture sessions instead of listed: a case
+ * with 160 PNGs proves use on eleven dates, and eleven dates is the fact counsel
+ * needs. Everything else — the agreement, letters, emails, court filings — is
+ * named individually, because each is a separate exhibit.
+ */
+function evidenceManifest(db: Database.Database, caseId: number): EvidenceManifest {
+  const rows = db
+    .prepare(
+      `SELECT path, kind, dated_at AS datedAt, mtime
+       FROM evidence_files WHERE case_id = ?`
+    )
+    .all(caseId) as Array<{
+    path: string | null
+    kind: string
+    datedAt: string | null
+    mtime: string | null
+  }>
+
+  const byKind = new Map<string, number>()
+  const sessions = new Map<string, number>()
+  const documents: EvidenceManifest['documents'] = []
+  const dates: string[] = []
+
+  for (const r of rows) {
+    byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1)
+    const date = r.datedAt ?? (r.mtime ? r.mtime.slice(0, 10) : null)
+    if (date) dates.push(date)
+    if (r.kind === 'screenshot' || r.kind === 'video') {
+      if (date) sessions.set(date, (sessions.get(date) ?? 0) + 1)
+    } else if (r.path) {
+      documents.push({ name: r.path.split('/').pop() ?? r.path, kind: r.kind, date })
+    }
+  }
+  dates.sort()
+
+  return {
+    total: rows.length,
+    byKind: [...byKind.entries()]
+      .map(([kind, count]) => ({ kind, count }))
+      .sort((a, b) => b.count - a.count),
+    documents: documents.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '')),
+    captureSessions: [...sessions.entries()]
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    earliest: dates[0] ?? null,
+    latest: dates[dates.length - 1] ?? null
+  }
+}
+
+/** Dated inter-party messages — extracted email threads and letters sent. */
+function correspondenceLines(db: Database.Database, caseId: number): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT at, kind, body FROM case_events
+         WHERE case_id = ? AND kind IN ('email','letter_sent','response')
+         ORDER BY at ASC, id ASC`
+      )
+      .all(caseId) as Array<{ at: string; kind: string; body: string }>
+  ).map((e) => `[${e.at}] (${e.kind.replace('_', ' ')}) ${e.body}`)
+}
+
+/** Open clocks counsel inherits with the matter. */
+function deadlineLines(db: Database.Database, caseId: number): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT due_at AS dueAt, kind, title FROM deadlines
+         WHERE ref_table = 'cases' AND ref_id = ? AND dismissed = 0 AND satisfied_at IS NULL
+         ORDER BY due_at ASC`
+      )
+      .all(caseId) as Array<{ dueAt: string; kind: string; title: string }>
+  ).map((d) => `[due ${d.dueAt}] (${d.kind.replace('_', ' ')}) ${d.title}`)
+}
+
 function caseInputs(db: Database.Database, caseId: number): {
   infringer: string
   contact: string | null
@@ -41,6 +124,9 @@ function caseInputs(db: Database.Database, caseId: number): {
   notes: string[]
   noteLines: string[]
   payments: string[]
+  evidence: EvidenceManifest
+  correspondence: string[]
+  deadlines: string[]
 } {
   const c = db
     .prepare(
@@ -108,7 +194,10 @@ function caseInputs(db: Database.Database, caseId: number): {
     trademarkNames: markNames.length > 0 ? markNames : ['(marks per case file)'],
     notes: events.map((e) => e.body),
     noteLines: events.map((e) => `[${e.at}] ${e.body}`),
-    payments
+    payments,
+    evidence: evidenceManifest(db, caseId),
+    correspondence: correspondenceLines(db, caseId),
+    deadlines: deadlineLines(db, caseId)
   }
 }
 
@@ -234,7 +323,9 @@ export async function generateLetter(
             settlement: i.settlement,
             resolvedBy: i.resolvedBy,
             notes: i.noteLines,
-            fileNames: [],
+            evidence: i.evidence,
+            correspondence: i.correspondence,
+            deadlines: i.deadlines,
             payments: i.payments
           }),
           maxTokens: 8000

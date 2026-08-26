@@ -19,7 +19,7 @@ import {
   safeFilename
 } from '../naming'
 import { AMANDA_SYSTEM_PROMPT, buildAmandaUserPrompt } from '../amandaPrompts'
-import { buildSummaryUserPrompt } from '../summaryPrompt'
+import { buildSummaryUserPrompt, renderEvidence } from '../summaryPrompt'
 
 describe('sell-off deadlines (§E.3.c)', () => {
   it('sell-off = license end + 180 days', () => {
@@ -225,7 +225,16 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       settlement: 'Litigation — default judgment pending',
       resolvedBy: null,
       notes: ['[2025-06-01] Case filed: 3:25-cv-02823-RBM-BJW'],
-      fileNames: [],
+      evidence: {
+        total: 0,
+        byKind: [],
+        documents: [],
+        captureSessions: [],
+        earliest: null,
+        latest: null
+      },
+      correspondence: [],
+      deadlines: [],
       payments: []
     })
     for (const section of [
@@ -241,5 +250,65 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       expect(p).toContain(section)
     }
     expect(p).toContain('Protocol: SUMMARY v1.0')
+  })
+})
+
+describe('referral evidence manifest', () => {
+  const manifest = {
+    total: 43,
+    byKind: [
+      { kind: 'screenshot', count: 38 },
+      { kind: 'letter', count: 2 },
+      { kind: 'agreement', count: 1 },
+      { kind: 'email', count: 1 },
+      { kind: 'other', count: 1 }
+    ],
+    documents: [
+      { name: 'Awake Chocolate License Agreement 2025.pdf', kind: 'agreement', date: '2025-04-22' },
+      { name: 'Re Upcoming Certification Renewal.pdf', kind: 'email', date: '2026-04-15' }
+    ],
+    captureSessions: [
+      { date: '2026-06-02', count: 12 },
+      { date: '2026-08-05', count: 26 }
+    ],
+    earliest: '2025-04-22',
+    latest: '2026-08-05'
+  }
+
+  it('collapses screenshots to capture sessions but names each document', () => {
+    const out = renderEvidence(manifest)
+    expect(out).toContain('43 files indexed')
+    expect(out).toContain('2026-06-02 (12)')
+    expect(out).toContain('Awake Chocolate License Agreement 2025.pdf')
+    // The point of sessions: dates, not 38 PNG filenames.
+    expect(out).not.toContain('.png')
+  })
+
+  it('says only that nothing is INDEXED, never that no evidence exists', () => {
+    const out = renderEvidence({
+      total: 0, byKind: [], documents: [], captureSessions: [], earliest: null, latest: null
+    })
+    expect(out).toContain('indexed')
+    expect(out.toLowerCase()).not.toContain('no evidence exists')
+  })
+
+  it('puts the evidence, correspondence and deadlines into the prompt', () => {
+    const p = buildSummaryUserPrompt({
+      infringer: 'Awake Chocolate',
+      contact: null, contactEmail: null,
+      trademarkNames: ['CERTIFIED P PALEO'],
+      caseType: 'Expired License', source: 'Website', url: null,
+      dateOpened: '2026-04-22', todayIso: '2026-08-26',
+      settlement: null, resolvedBy: null, notes: [],
+      evidence: manifest,
+      correspondence: ['[2026-04-15] (email) Kennedy Velikonja: renewal under internal review.'],
+      deadlines: ['[due 2026-10-18] (selloff end) Awake Chocolate — sell-off window closes'],
+      payments: []
+    })
+    expect(p).toContain('43 files indexed')
+    expect(p).toContain('Kennedy Velikonja')
+    expect(p).toContain('sell-off window closes')
+    // The rule that keeps counsel from being told a gap exists that does not.
+    expect(p).toContain('not in the record provided')
   })
 })

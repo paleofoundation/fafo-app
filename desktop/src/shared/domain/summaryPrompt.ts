@@ -22,14 +22,65 @@ export interface SummaryInput {
   resolvedBy: string | null
   /** chronological "[date] text" lines */
   notes: string[]
-  fileNames: string[]
+  /** What is actually on the case, not a filename dump — see EvidenceManifest. */
+  evidence: EvidenceManifest
+  /** Dated inter-party messages, extracted from correspondence on file. */
+  correspondence: string[]
+  /** Open clocks counsel inherits: sell-off end, response deadlines. */
+  deadlines: string[]
   /** "$amount on date — received|pending" lines */
   payments: string[]
 }
 
+/**
+ * The evidence actually held for a case.
+ *
+ * Screenshots collapse into dated capture sessions rather than listing 160
+ * filenames: counsel needs to know that use was captured on eleven dates
+ * spanning fourteen months, not to read every PNG name. Documents — the
+ * agreement, letters, emails, court filings — are named individually, because
+ * each is a distinct exhibit.
+ */
+export interface EvidenceManifest {
+  total: number
+  byKind: Array<{ kind: string; count: number }>
+  documents: Array<{ name: string; kind: string; date: string | null }>
+  captureSessions: Array<{ date: string; count: number }>
+  earliest: string | null
+  latest: string | null
+}
+
+export function renderEvidence(e: EvidenceManifest): string {
+  if (e.total === 0) {
+    return 'NO evidence files are indexed for this case in FAFO.'
+  }
+  const lines = [
+    `${e.total} files indexed` +
+      (e.earliest && e.latest ? `, dated ${e.earliest} to ${e.latest}` : ''),
+    'By kind: ' + e.byKind.map((k) => `${k.count} ${k.kind}`).join(', '),
+  ]
+  if (e.captureSessions.length) {
+    lines.push(
+      'Capture sessions (dated screenshot sets evidencing use): ' +
+        e.captureSessions.map((c) => `${c.date} (${c.count})`).join(', ')
+    )
+  }
+  if (e.documents.length) {
+    lines.push('Documents on file:')
+    for (const d of e.documents) {
+      lines.push(`  - [${d.kind}] ${d.name}${d.date ? ` (${d.date})` : ''}`)
+    }
+  }
+  return lines.join('\n')
+}
+
 export function buildSummaryUserPrompt(c: SummaryInput): string {
   const notesText = c.notes.join('\n')
-  const filesText = c.fileNames.join(', ') || 'None on file'
+  const evidenceText = renderEvidence(c.evidence)
+  const correspondenceText = c.correspondence.length
+    ? c.correspondence.join('\n')
+    : 'No inter-party correspondence has been extracted into the case record.'
+  const deadlinesText = c.deadlines.length ? c.deadlines.join('\n') : 'None recorded'
   const paymentsText = c.payments.join('; ') || 'None'
   const resolvedBy = c.resolvedBy ? `Resolved by: ${c.resolvedBy}` : ''
 
@@ -52,7 +103,15 @@ ${resolvedBy}
 Case Notes (chronological):
 ${notesText || 'None recorded'}
 
-Files on record: ${filesText}
+EVIDENCE ON FILE:
+${evidenceText}
+
+CORRESPONDENCE ON RECORD (dated, extracted from the documents above):
+${correspondenceText}
+
+OPEN DEADLINES (clocks counsel inherits):
+${deadlinesText}
+
 Payments: ${paymentsText}
 
 MASTER REFERENCE CONTEXT:
@@ -64,6 +123,15 @@ REQUIRED OUTPUT STRUCTURE — follow exactly, populate every section:
 Trademark Infringement Matter
 Paleo Certified, Inc. dba The Paleo Foundation v. ${c.infringer}
 Date of Referral: ${c.todayIso}
+
+EVIDENTIARY RULE — this document is relied on by outside counsel:
+Distinguish "not in the record provided" from "does not exist". Where a fact is
+absent from the case data above, write that it is not in the record and should be
+confirmed — never assert that a thing did not happen, was never sent, or is
+missing from the file. Do not characterise the record as deficient on the basis of
+data you were not given. Facts supplied above (licensee name, address, term dates,
+fee, evidence counts and dates) are extracted from source documents: reproduce them
+verbatim rather than inferring or restating them approximately.
 
 # 1. Parties
 ## 1a. Licensor / Complainant
@@ -106,7 +174,7 @@ Date of Referral: ${c.todayIso}
 [Flag duration, breadth, willfulness if second infringement. Recommend upward revision if warranted.]
 
 # 7. Evidence on File
-[List all files attached to case. Include any URLs from notes that were captured as evidence.]
+[Reproduce the EVIDENCE ON FILE block above: total, breakdown by kind, capture-session dates, and each named document. Add any URLs from notes that were captured as evidence. Never omit this section. If the block states no files are indexed, say exactly that — do not infer that no evidence exists in the world.]
 
 # 8. Recommended Counsel Actions
 ## 8a. Jurisdiction
