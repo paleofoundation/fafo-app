@@ -346,9 +346,11 @@ export async function runEmailExtraction(
       db.transaction(() => {
         clearPrior.run(c.evidenceId)
         for (const m of dated) {
+          // The sender prefix is load-bearing: the referral reads the most
+          // recent counterparty off it. No [commitment] flag — a referral
+          // timeline carries when and what, and counsel draws the inferences.
           const who = m.from ? `${m.from}: ` : ''
-          const flag = m.isCommitment ? ' [commitment]' : ''
-          insertEvent.run(c.caseId, m.sentAt, `${who}${m.summary}${flag}`, c.evidenceId)
+          insertEvent.run(c.caseId, m.sentAt, `${who}${m.summary}`, c.evidenceId)
         }
         markDone.run(
           new Date().toISOString(),

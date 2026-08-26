@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from '../../db/migrations'
 import { seedIfEmpty } from '../../db/seed'
-import { letterToHtml, licenseFactsBlock } from '../letters'
+import { latestCounterparty, letterToHtml, licenseFactsBlock } from '../letters'
 import { letterToDocument } from '../letterPdf'
 
 describe('letterToHtml (branded Drive export)', () => {
@@ -126,5 +126,31 @@ describe('licenseFactsBlock', () => {
     const facts = licenseFactsBlock(db, caseIdFor('Little West'))
     expect(facts).toContain('none on file')
     expect(facts).toContain('do not assert license terms')
+  })
+})
+
+describe('latestCounterparty', () => {
+  const db = new Database(':memory:')
+  migrate(db)
+  seedIfEmpty(db)
+
+  it('names whoever wrote last from the other side, not the stale record', () => {
+    db.prepare("INSERT INTO cases (id, title, type, status, source, opened_at) VALUES (900,'X','Expired License','Open','Website','2026-01-01')").run()
+    const add = db.prepare("INSERT INTO case_events (case_id, at, kind, body) VALUES (900, ?, 'email', ?)")
+    add.run('2026-04-15', 'Kennedy Velikonja kennedy.velikonja@awakechocolate.com: confirms she has the agreement.')
+    // Ours, and more recent — must be skipped, or the referral names us.
+    add.run('2026-08-05', 'Jonathan Pendergrass <jonathand@paleofoundation.org>: listing still shows the mark.')
+    add.run('2026-08-11', 'Adam Deremo Adam@awakechocolate.com: declines payment, relies on the sell-off clause.')
+    expect(latestCounterparty(db, 900)).toEqual({
+      name: 'Adam Deremo',
+      email: 'Adam@awakechocolate.com'
+    })
+  })
+
+  it('is null when only our own side is on record', () => {
+    db.prepare("INSERT INTO cases (id, title, type, status, source, opened_at) VALUES (901,'Y','Expired License','Open','Website','2026-01-01')").run()
+    db.prepare("INSERT INTO case_events (case_id, at, kind, body) VALUES (901,'2026-01-02','email',?)")
+      .run('Jonathan Pendergrass jonathand@paleofoundation.org: notice sent.')
+    expect(latestCounterparty(db, 901)).toBeNull()
   })
 })

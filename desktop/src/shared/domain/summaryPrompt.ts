@@ -210,44 +210,60 @@ description, or officers to this subsection.]
 ${section1b}
 
 # 2. Correspondence Timeline
-[A dated thread of the exchange between the parties, drawn from CORRESPONDENCE ON
-RECORD and the case notes. One entry per message: date, who sent it, and what it
-said. Include, where the record has them:
- - renewal correspondence, and any notice that the licence was expiring;
- - the licence expiry or termination date, and the date termination was sent;
- - the respondent's stated intent to discontinue use, and the date given for it;
- - every reply from the respondent, so counsel can see response times and gaps;
- - anything after the licence ended that bears on liquidated damages or settlement,
-   including offers, counter-offers and silence following a demand.
-Exclude routine or administrative traffic that carries none of the above. Do not
-add flags, labels, tags or an editorial gloss to the entries — counsel draws the
-inferences. Give the timeline entries only.
+[A dated list of what happened, drawn from CORRESPONDENCE ON RECORD and the case
+notes. One line per event, in exactly this form — date, hyphen, what happened:
+
+  1/27/22 - Sent renewal request as license expired on 2/23/22. (agreement has license expiring on 2/11/22).
+  3/29/22 - Sent followup email for renewal
+  9/27/22 - Found TBE Beverage products in an Erewhon in Venice, CA
+  9/28/22 - Sent email to TBE Beverages notifying them of the infringement
+  9/28/22 - Reply from TBE Beverages to renew certification
+  10/31/22 - Jordan leaves TBE Beverages and hands process over to Brenton Blanchard
+  12/1/22 - Followup with no response
+
+Dates in M/D/YY. No commentary, no analysis, no significance, no labels, no
+flags, no bold, no table, no grouping headings, and no closing paragraph. When
+and what happened, nothing else — counsel draws the inferences.
+
+Include: renewal correspondence and expiry notices; the termination date and the
+date it was sent; any stated intention to discontinue, and the date given; every
+reply from the respondent, so response times and gaps are visible; anything after
+the licence ended bearing on liquidated damages or settlement, including offers,
+counter-offers and silence following a demand. A change of contact person is
+worth a line. Leave out routine or administrative traffic.
+
+Never include FAFO's own internal housekeeping — imports, status changes,
+re-indexing, or file counts. That is not correspondence.
+
 If no correspondence has been extracted into the record, say exactly that: state
 that the case documents have not yet been processed into dated entries, not that
 no correspondence exists.]
 
 # 3. Evidence
-## 3a. Files on Record
-[Reproduce the EVIDENCE ON FILE block above: total, breakdown by kind,
-capture-session dates, and each named document. Add any URLs from the notes that
-were captured as evidence. Never omit this subsection. If the block states no
-files are indexed, say exactly that — do not infer that no evidence exists in the
-world.]
-## 3b. Screenshot Exhibits
 [One short line per exhibit listed in SCREENSHOT EXHIBITS above, in that order,
 giving the exhibit letter, the platform, the capture date, and what the capture
-shows — which mark appears, on what page or listing. Then end this subsection with
-the following marker alone on its own line, exactly as written, with nothing after
-it:
-${SCREENSHOT_MARKER}]
+shows — which mark appears, on what page or listing. Then end the section with
+the following marker alone on its own line, exactly as written, with nothing
+after it:
+${SCREENSHOT_MARKER}
+
+Do NOT reproduce the EVIDENCE ON FILE block, a file count, a breakdown by kind,
+a capture-session list, or a document inventory. That block is context for you,
+not content for counsel — the exhibits are what this section supplies.]
 
 # 4. Settlement Position
 ## 4a. Options Presented
 [From settlement field — parse Option 1 / Option 2 if structured, otherwise present as stated]
 ## 4b. Basis for Calculation
-[From MASTER_REF pricing bands + duration. Calculate based on type and pricing band.]
+[Three sentences at most. The figures were already stated to the respondent in
+the initial infringement correspondence — take them from the record rather than
+recomputing, and where a second option was offered, give that too. Do not
+reproduce the pricing bands, do not show the arithmetic, and do not add a
+schedule or table.]
 ## 4c. Respondent's Stated Position
-[From notes — accepted, rejected, or open]
+[From the most recent correspondence on record: whether they have accepted,
+rejected, gone silent, or stated an intention to keep using the mark. Give the
+position as they put it, with the date they put it, in a sentence or two.]
 ## 4d. Note to Counsel
 [Flag duration, breadth, willfulness if second infringement. Recommend upward revision if warranted.]
 

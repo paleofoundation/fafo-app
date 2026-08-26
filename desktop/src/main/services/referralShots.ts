@@ -88,81 +88,75 @@ function platformRank(platform: string | null): number {
  * channel. Taking a round at a time gives both.
  */
 /**
- * Order one platform's captures so that consecutive picks land on different
- * days. Without this, a case whose captures were all taken in one sitting
- * yields five frames of the same page seconds apart — Yo Mama's Foods has 244
- * screenshots and would otherwise have offered 20:05:53 through 20:07:11 of the
- * same afternoon. Newest day first, then the next day, then back round.
- */
-function rotateByDate<T extends { date: string | null; row: ShotRow }>(items: T[]): T[] {
-  const byDate = new Map<string, T[]>()
-  for (const item of items) {
-    const key = item.date ?? ''
-    const bucket = byDate.get(key)
-    if (bucket) bucket.push(item)
-    else byDate.set(key, [item])
-  }
-  const days = [...byDate.entries()].sort((a, b) => b[0].localeCompare(a[0]))
-  for (const [, bucket] of days) bucket.sort((a, b) => a.row.path.localeCompare(b.row.path))
-
-  const out: T[] = []
-  for (let round = 0; out.length < items.length; round += 1) {
-    let took = false
-    for (const [, bucket] of days) {
-      const item = bucket[round]
-      if (!item) continue
-      out.push(item)
-      took = true
-    }
-    if (!took) break
-  }
-  return out
-}
-
-/**
- * Round-robin across platforms, and within a platform across capture days.
+ * Choose the captures a referral reproduces.
  *
- * Breadth first: one Website capture plus one Amazon capture proves two
- * channels, where two Website captures prove one. Recency second: the newest
- * capture is what shows the use is still live at the date of referral.
+ * The first and last captures are pinned: together they are the duration
+ * argument, showing the mark in use on the earliest date the file records and
+ * still in use on the most recent. The middle three go to breadth — each pick
+ * takes the platform least represented so far, so a case with website, Amazon
+ * and Instagram evidence shows all three rather than three views of a store
+ * page. Output is chronological, so the section reads as a span of time.
  */
 export function pickExhibits(rows: ShotRow[], limit = 5): ScreenshotExhibit[] {
-  const withMeta = rows.map((r) => ({
+  type Item = { row: ShotRow; platform: string | null; date: string | null }
+  const items: Item[] = rows.map((r) => ({
     row: r,
     platform: platformOf(r.path),
     date: captureDateOf(r)
   }))
+  if (items.length === 0) return []
 
-  const groups = new Map<string, typeof withMeta>()
-  for (const item of withMeta) {
-    const key = item.platform?.toLowerCase() ?? ''
-    const bucket = groups.get(key)
-    if (bucket) bucket.push(item)
-    else groups.set(key, [item])
-  }
+  const byDate = (a: Item, b: Item): number =>
+    (a.date ?? '').localeCompare(b.date ?? '') || a.row.path.localeCompare(b.row.path)
+  const chronological = [...items].sort(byDate)
 
-  const ordered = [...groups.values()]
-    .sort(
-      (a, b) =>
-        platformRank(a[0]!.platform) - platformRank(b[0]!.platform) ||
-        (a[0]!.platform ?? '').localeCompare(b[0]!.platform ?? '')
-    )
-    .map(rotateByDate)
+  // An undated capture cannot anchor either end of the span.
+  const earliest = chronological.find((i) => i.date) ?? chronological[0]!
+  const latest =
+    [...chronological].reverse().find((i) => i.date && i !== earliest) ??
+    chronological[chronological.length - 1]!
 
-  const picked: typeof withMeta = []
-  for (let round = 0; picked.length < limit; round += 1) {
-    let tookAny = false
-    for (const bucket of ordered) {
-      const item = bucket[round]
-      if (!item) continue
-      picked.push(item)
-      tookAny = true
-      if (picked.length >= limit) break
+  const picked: Item[] = [earliest]
+  if (latest !== earliest && picked.length < limit) picked.push(latest)
+
+  const pool = items.filter((i) => !picked.includes(i))
+  while (picked.length < limit && pool.length > 0) {
+    const seen = new Map<string, number>()
+    for (const p of picked) seen.set(p.platform?.toLowerCase() ?? '', (seen.get(p.platform?.toLowerCase() ?? '') ?? 0) + 1)
+    const dates = new Set(picked.map((p) => p.date))
+
+    let best = 0
+    for (let i = 1; i < pool.length; i += 1) {
+      const a = pool[i]!
+      const b = pool[best]!
+      // Rank by how much a pick ADDS: a capture on a new channel and a new day
+      // adds most, one that repeats both adds nothing. Ranking by channel alone
+      // failed on Buddha Brands, whose only two channels are single-session —
+      // once both were covered it spent the last slot on a second frame of the
+      // same minute while six unused capture dates sat in the pool.
+      const key = (x: Item): [number, number, number, string] => {
+        const channelSeen = (seen.get(x.platform?.toLowerCase() ?? '') ?? 0) > 0 ? 1 : 0
+        const daySeen = dates.has(x.date) ? 1 : 0
+        return [
+          channelSeen + daySeen,
+          channelSeen, // a new channel beats a new day when both add one thing
+          platformRank(x.platform),
+          // Most recent within all that: the newest capture on a channel is the
+          // one that shows the channel is still live.
+          x.date ? String(9999 - Number(x.date.slice(0, 4))) + x.date.slice(5) : 'zzzz'
+        ]
+      }
+      const [ka, kb] = [key(a), key(b)]
+      for (let k = 0; k < ka.length; k += 1) {
+        if (ka[k] === kb[k]) continue
+        if (ka[k]! < kb[k]!) best = i
+        break
+      }
     }
-    if (!tookAny) break
+    picked.push(pool.splice(best, 1)[0]!)
   }
 
-  return picked.map((item, i) => ({
+  return picked.sort(byDate).map((item, i) => ({
     label: String.fromCharCode(65 + i),
     path: item.row.path,
     fileName: path.basename(item.row.path),

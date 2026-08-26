@@ -113,6 +113,47 @@ function deadlineLines(db: Database.Database, caseId: number): string[] {
   ).map((d) => `[due ${d.dueAt}] (${d.kind.replace('_', ' ')}) ${d.title}`)
 }
 
+
+/** Addresses on our own side of the correspondence. */
+const OUR_DOMAIN = /paleofoundation\.(org|com)/i
+
+/**
+ * The person actually corresponding, as of the latest message on file.
+ *
+ * The licensee record holds whoever was contact when the case was opened, and
+ * that goes stale: Awake Chocolate's record still named the recipient of the
+ * termination letter from April, four months after the matter had been handed
+ * to Adam Deremo, who is the one making their argument. A referral that names
+ * the wrong person sends counsel to the wrong person.
+ */
+export function latestCounterparty(
+  db: Database.Database,
+  caseId: number
+): { name: string | null; email: string | null } | null {
+  const rows = db
+    .prepare(
+      `SELECT body FROM case_events WHERE case_id = ? AND kind = 'email'
+       ORDER BY at DESC, id DESC`
+    )
+    .all(caseId) as Array<{ body: string }>
+
+  for (const r of rows) {
+    const sep = r.body.indexOf(': ')
+    if (sep <= 0) continue
+    const from = r.body.slice(0, sep).trim()
+    if (!from || OUR_DOMAIN.test(from)) continue
+    const email = from.match(/[\w.+-]+@[\w-]+\.[\w.-]+/)?.[0] ?? null
+    if (email && OUR_DOMAIN.test(email)) continue
+    const name = from
+      .replace(email ?? '', '')
+      .replace(/[<>(),;"]/g, '')
+      .trim()
+    if (!name && !email) continue
+    return { name: name || null, email }
+  }
+  return null
+}
+
 function caseInputs(db: Database.Database, caseId: number): {
   infringer: string
   contact: string | null
@@ -169,9 +210,19 @@ function caseInputs(db: Database.Database, caseId: number): {
       ).map((r) => r.name)
     : []
 
+  // FAFO's own bookkeeping must not reach outside counsel. The v1 Awake
+  // referral told Trestle the matter had been "administratively defaulted to
+  // Resolved upon archive import" and listed import flags on unrecognised
+  // subfolders — internal housekeeping, reported as case history.
   const events = db
     .prepare(
-      `SELECT at, kind, body FROM case_events WHERE case_id = ? ORDER BY at ASC, id ASC`
+      `SELECT at, kind, body FROM case_events
+       WHERE case_id = ? AND kind NOT IN ('import', 'status_change', 'evidence')
+         AND body NOT LIKE 'Sheet import%'
+         AND body NOT LIKE 'Status:%'
+         AND body NOT LIKE '%exported to Drive:%'
+         AND body NOT LIKE '%saved to /%'
+       ORDER BY at ASC, id ASC`
     )
     .all(caseId) as Array<{ at: string; kind: string; body: string }>
 
@@ -184,10 +235,12 @@ function caseInputs(db: Database.Database, caseId: number): {
       .all(caseId) as Array<{ cents: number; date: string | null; received: number }>
   ).map((p) => `$${(p.cents / 100).toLocaleString()} on ${p.date ?? '?'} — ${p.received ? 'received' : 'pending'}`)
 
+  // Correspondence outranks the licensee record — see latestCounterparty.
+  const current = latestCounterparty(db, caseId)
   return {
     infringer: c.licenseeName ?? c.title,
-    contact: c.contact,
-    contactEmail: c.contactEmail,
+    contact: current?.name ?? c.contact,
+    contactEmail: current?.email ?? c.contactEmail,
     caseType: c.type,
     source: c.source,
     url: c.url,

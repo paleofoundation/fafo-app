@@ -41,46 +41,47 @@ describe('screenshot exhibit selection', () => {
     expect(platformOf(`${ROOT}/x/Packaging pre-2015/a.png`)).toBe('Packaging pre-2015')
   })
 
-  it('spreads picks across capture days when every capture shares one platform', () => {
-    // Yo Mama's Foods shape: 244 captures, no platform subfolders, several
-    // sittings. Naive recency returns five frames of one afternoon.
+  it('always pins the first and last capture, and reads chronologically', () => {
     const rows = [
-      ...['8.05.53', '8.06.33', '8.07.02', '8.07.09', '8.07.11'].map((t) => ({
-        path: `${ROOT}/Screenshot 2024-11-04 at ${t} PM.png`, datedAt: null, mtime: null
-      })),
-      { path: `${ROOT}/Screenshot 2024-10-09 at 3.38.57 PM.png`, datedAt: null, mtime: null },
-      { path: `${ROOT}/Screenshot 2024-08-14 at 10.14.33 PM.png`, datedAt: null, mtime: null }
-    ]
-    const dates = pickExhibits(rows, 5).map((p) => p.date)
-    expect(dates.slice(0, 3)).toEqual(['2024-11-04', '2024-10-09', '2024-08-14'])
-    expect(new Set(dates).size).toBe(3)
-  })
-
-  it('takes one capture per platform before a second from any', () => {
-    const rows = [
-      { path: `${ROOT}/A/Website/Screenshot 2026-08-05 at 1.png`, datedAt: null, mtime: null },
-      { path: `${ROOT}/A/Website/Screenshot 2026-08-05 at 2.png`, datedAt: null, mtime: null },
-      { path: `${ROOT}/A/Website/Screenshot 2026-08-05 at 3.png`, datedAt: null, mtime: null },
-      { path: `${ROOT}/A/Amazon/Screenshot 2026-07-13 at 1.png`, datedAt: null, mtime: null },
-      { path: `${ROOT}/A/Instagram/Screenshot 2026-06-11 at 1.png`, datedAt: null, mtime: null }
-    ]
-    const picked = pickExhibits(rows, 5)
-    expect(picked.map((p) => p.platform)).toEqual([
-      'Website',
-      'Amazon',
-      'Instagram',
-      'Website',
-      'Website'
-    ])
-    expect(picked.map((p) => p.label)).toEqual(['A', 'B', 'C', 'D', 'E'])
-  })
-
-  it('takes the most recent capture within a platform', () => {
-    const rows = [
-      { path: `${ROOT}/A/Website/Screenshot 2024-01-01 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Website/Screenshot 2024-01-15 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Website/Screenshot 2025-03-02 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Amazon/Screenshot 2025-07-19 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Instagram/Screenshot 2026-02-08 at 1.png`, datedAt: null, mtime: null },
       { path: `${ROOT}/A/Website/Screenshot 2026-08-05 at 1.png`, datedAt: null, mtime: null }
     ]
-    expect(pickExhibits(rows, 1)[0]!.date).toBe('2026-08-05')
+    const picked = pickExhibits(rows, 5)
+    // The span is the duration argument: earliest still in the file, and the
+    // most recent capture proving use had not stopped.
+    expect(picked[0]!.date).toBe('2024-01-15')
+    expect(picked[picked.length - 1]!.date).toBe('2026-08-05')
+    expect(picked.map((p) => p.date)).toEqual([...picked.map((p) => p.date)].sort())
+  })
+
+  it('spends the middle picks on platforms not already represented', () => {
+    // Eight website captures crowd the pool; Amazon and Instagram must still
+    // appear, because one channel proves one channel.
+    const rows = [
+      ...Array.from({ length: 8 }, (_, i) => ({
+        path: `${ROOT}/A/Website/Screenshot 2025-0${i + 1}-10 at 1.png`, datedAt: null, mtime: null
+      })),
+      { path: `${ROOT}/A/Amazon/Screenshot 2025-04-11 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Instagram/Screenshot 2025-05-11 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Facebook/Screenshot 2025-06-11 at 1.png`, datedAt: null, mtime: null }
+    ]
+    const platforms = pickExhibits(rows, 5).map((p) => p.platform)
+    expect(platforms).toContain('Amazon')
+    expect(platforms).toContain('Instagram')
+    expect(platforms).toContain('Facebook')
+  })
+
+  it('pins both ends even when one end is the only capture on its platform', () => {
+    const rows = [
+      { path: `${ROOT}/A/Packaging/Screenshot 2023-05-09 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Website/Screenshot 2025-01-01 at 1.png`, datedAt: null, mtime: null },
+      { path: `${ROOT}/A/Website/Screenshot 2026-08-05 at 1.png`, datedAt: null, mtime: null }
+    ]
+    const picked = pickExhibits(rows, 5)
+    expect(picked.map((p) => p.date)).toEqual(['2023-05-09', '2025-01-01', '2026-08-05'])
   })
 
   it('returns what exists when the case has fewer than five captures', () => {

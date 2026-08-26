@@ -247,6 +247,7 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
     ]) {
       expect(p).toContain(section)
     }
+    expect(p).not.toContain('3a. Files on Record')
     for (const cut of [
       '# 2. Background',
       '# 3. Infringement',
@@ -289,8 +290,10 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       payments: [], screenshots: [],
       evidence: { total: 0, byKind: [], documents: [], captureSessions: [], earliest: null, latest: null }
     })
-    expect(p).toContain('add flags, labels, tags or an editorial gloss')
+    expect(p).toContain('No commentary, no analysis, no significance, no labels')
     expect(p).toContain('DO NOT emit a protocol line')
+    // The manifest is grounding for the drafter, never a section for counsel.
+    expect(p).toContain('Do NOT reproduce the EVIDENCE ON FILE block')
   })
 })
 
