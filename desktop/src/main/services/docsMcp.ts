@@ -61,10 +61,9 @@ export async function createBrandedDoc(
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    // invalid_grant is the specific, recurring failure: Google expires the
-    // service's refresh token every ~7 days while the consent screen sits in
-    // Testing mode. Name the fix rather than the symptom — and point at the
-    // local save, so the export is never a dead end.
+    // invalid_grant is the specific, recurring failure: the service's Google
+    // refresh token has stopped being accepted. Name the fix rather than the
+    // symptom — and point at the local save, so the export is never a dead end.
     if (res.status === 401) {
       throw new Error(
         'The docs-mcp service rejected our key. It was rotated or never stored — ' +
@@ -73,10 +72,11 @@ export async function createBrandedDoc(
     }
     if (body.includes('invalid_grant')) {
       throw new Error(
-        'Google rejected the stored refresh token (invalid_grant). It expires about every 7 days ' +
-          'while the OAuth consent screen is in Testing mode. Use "Save as file" to get this ' +
-          'document out now, then re-mint the token or publish the consent screen to Production ' +
-          '— procedure in docs/SAVEPOINT-v1.0.4.md.'
+        'Google rejected the stored refresh token (invalid_grant). Use "Save as file" to get this ' +
+          'document out now, then re-mint the token:\n\n' +
+          '  python3 server/remint-drive-token.py --run\n\n' +
+          'The consent screen is published to Production, so a token minted now should not expire ' +
+          'on the old 7-day Testing clock — procedure in docs/SAVEPOINT-v1.0.4.md.'
       )
     }
     throw new Error(`docs-mcp ${res.status}: ${body.slice(0, 200) || 'no body'}`)
