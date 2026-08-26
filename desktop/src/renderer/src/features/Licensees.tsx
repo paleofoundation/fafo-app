@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { LicenseView } from '../../../shared/types'
+import { usDate } from '../../../shared/domain/deadlines'
 
 const STATUS_PILL: Record<string, string> = {
   active: 'done',
@@ -70,7 +71,7 @@ export function Licensees(): React.JSX.Element {
                   ))}
                 </td>
                 <td style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12.5 }}>
-                  {r.termStart || r.termEnd ? `${r.termStart ?? '?'} → ${r.termEnd ?? '?'}` : '—'}
+                  {r.termStart || r.termEnd ? `${r.termStart ? usDate(r.termStart) : '?'} → ${r.termEnd ? usDate(r.termEnd) : '?'}` : '—'}
                 </td>
                 <td style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12.5 }}>
                   {r.annualFeeCents !== null

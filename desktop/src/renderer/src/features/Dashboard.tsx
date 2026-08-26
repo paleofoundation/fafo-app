@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { Deadline } from '../../../shared/types'
+import { usDate } from '../../../shared/domain/deadlines'
 
 /**
  * The deadline surface — the single highest-legal-value screen in the app.
@@ -38,7 +39,7 @@ export function Dashboard({
     <div>
       <h1>Deadline Surface</h1>
       <p className="subtitle">
-        Sell-off windows, response clocks, and review dates — ordered by urgency. Today is {today}.
+        Sell-off windows, response clocks, and review dates — ordered by urgency. Today is {usDate(today)}.
       </p>
 
       <div className="card">
@@ -85,7 +86,7 @@ function DeadlineLine({
   )
   const pill = d.satisfiedAt ? 'done' : days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'later'
   const label = d.satisfiedAt
-    ? `done ${d.satisfiedAt}`
+    ? `done ${usDate(d.satisfiedAt)}`
     : days < 0
       ? `${-days}d overdue`
       : days === 0
@@ -94,7 +95,7 @@ function DeadlineLine({
 
   return (
     <div className="deadline-row">
-      <span className="deadline-date">{d.dueAt}</span>
+      <span className="deadline-date">{usDate(d.dueAt)}</span>
       <span className={`pill ${pill}`}>{label}</span>
       <span className="deadline-title">
         {d.title}

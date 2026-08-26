@@ -14,6 +14,7 @@ import type {
   SnapshotImportResult,
   SnapshotStatus
 } from '../../../shared/types'
+import { usDate } from '../../../shared/domain/deadlines'
 
 /**
  * M2 ingest surface. Nothing writes to the database without an explicit
@@ -225,7 +226,7 @@ function NewCasesImportCard({
                     {r.resolvedBy && ` · ${r.resolvedBy}`}
                   </td>
                   <td className="deadline-meta" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {r.openedAt}
+                    {usDate(r.openedAt)}
                   </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {r.amountCents !== null ? money(r.amountCents) : '—'}
@@ -377,11 +378,11 @@ function MetricsImportCard({
                 <div key={c.caseId} style={{ fontSize: 12.5, marginBottom: 5 }}>
                   <strong>{c.caseTitle}</strong> — on file{' '}
                   {c.existing
-                    .map((e) => `${money(e.amountCents)}${e.date ? ` (${e.date})` : ''}`)
+                    .map((e) => `${money(e.amountCents)}${e.date ? ` (${usDate(e.date)})` : ''}`)
                     .join(' + ')}{' '}
                   · export brings{' '}
                   {c.incoming
-                    .map((i) => `${money(i.amountCents)}${i.date ? ` (${i.date})` : ''}`)
+                    .map((i) => `${money(i.amountCents)}${i.date ? ` (${usDate(i.date)})` : ''}`)
                     .join(' + ')}
                   <div className="deadline-meta">
                     Replace → {money(c.supersedeCents)} · Keep both → {money(c.keepBothCents)}
@@ -408,7 +409,7 @@ function MetricsImportCard({
               {plan.statusFixes.map((f) => (
                 <div key={f.paymentId} style={{ fontSize: 12.5, marginTop: 4 }}>
                   <strong>{f.label}</strong> {money(f.amountCents)}
-                  {f.date && ` (${f.date})`} — on file as{' '}
+                  {f.date && ` (${usDate(f.date)})`} — on file as{' '}
                   {f.currentlyReceived ? 'received' : 'not received'}, export says{' '}
                   <strong>{f.exportSaysReceived ? 'received' : 'NOT received'}</strong>
                 </div>
@@ -616,7 +617,7 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
         )}
         {snapStatus?.present && (
           <p className="subtitle">
-            Snapshot of {snapStatus.total} agreement groups, exported {snapStatus.exportedAt?.slice(0, 16).replace('T', ' ')}.
+            Snapshot of {snapStatus.total} agreement groups, exported {snapStatus.exportedAt ? `${usDate(snapStatus.exportedAt)} ${snapStatus.exportedAt.slice(11, 16)}` : ''}.
             Importing builds the licensee ledger — company names, agreement years, signer emails.
             Term dates arrive later via PDF extraction and stay review-flagged until then.
           </p>
@@ -695,8 +696,8 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
                     {r.status} <span className="deadline-meta">→ {r.mappedStatus}</span>
                   </td>
                   <td style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}>
-                    {r.startDate ?? '—'}
-                    {r.endDate ? ` → ${r.endDate}` : ''}
+                    {r.startDate ? usDate(r.startDate) : '—'}
+                    {r.endDate ? ` → ${usDate(r.endDate)}` : ''}
                   </td>
                   <td>
                     {r.alreadyImported ? (
@@ -842,7 +843,7 @@ export function Import({ onChanged }: { onChanged: () => Promise<void> }): React
                       {f.evidenceSessions > 0 && `, ${f.evidenceSessions} sessions`}
                       {f.earliestEvidence && (
                         <div className="deadline-meta">
-                          {f.earliestEvidence} → {f.latestEvidence}
+                          {usDate(f.earliestEvidence)} → {usDate(f.latestEvidence)}
                         </div>
                       )}
                     </td>

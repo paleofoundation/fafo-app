@@ -320,7 +320,7 @@ export function Cases({
                     <span className={`pill ${STATUS_PILL[c.status]}`}>{c.status}</span>
                   </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums', overflow: 'hidden' }}>
-                    {c.openedAt}
+                    {usDate(c.openedAt)}
                   </td>
                 </tr>
               ))}
@@ -356,12 +356,16 @@ function InlineField({
   label,
   value,
   onSave,
-  options
+  options,
+  type
 }: {
   label: string
   value: string
   onSave: (v: string) => Promise<void>
   options?: readonly string[]
+  /** 'date' renders a real date picker — it displays in the viewer's locale
+      and still hands back ISO, so the stored value never changes shape. */
+  type?: 'date'
 }): React.JSX.Element {
   const [draft, setDraft] = useState(value)
   useEffect(() => setDraft(value), [value])
@@ -387,7 +391,13 @@ function InlineField({
           ))}
         </select>
       ) : (
-        <input className="inline" value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => void commit()} />
+        <input
+          className="inline"
+          type={type}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => void commit()}
+        />
       )}
     </div>
   )
@@ -453,7 +463,7 @@ function CaseDetail({
         <InlineField label="Type" value={c.type} options={CASE_TYPES} onSave={(v) => patch({ type: v as CaseRow['type'] })} />
         <InlineField label="Source" value={c.source} options={CASE_SOURCES} onSave={(v) => patch({ source: v as CaseRow['source'] })} />
         <InlineField label="URL" value={c.url ?? ''} onSave={(v) => patch({ url: v || null })} />
-        <InlineField label="Opened" value={c.openedAt} onSave={(v) => patch({ openedAt: v })} />
+        <InlineField label="Opened" value={c.openedAt} type="date" onSave={(v) => patch({ openedAt: v })} />
         <InlineField label="Settlement position" value={c.settlementPosition ?? ''} onSave={(v) => patch({ settlementPosition: v || null })} />
         <InlineField
           label="Resolution credit"
@@ -470,7 +480,7 @@ function CaseDetail({
         {data.deadlines.length === 0 && <div className="empty">No deadlines attached to this case.</div>}
         {data.deadlines.map((d) => (
           <div key={d.id} className="deadline-row">
-            <span className="deadline-date">{d.dueAt}</span>
+            <span className="deadline-date">{usDate(d.dueAt)}</span>
             <span className="deadline-title">{d.title}</span>
             {d.satisfiedAt && <span className="pill done">done</span>}
           </div>
@@ -512,7 +522,7 @@ function CaseDetail({
         <h2>Timeline</h2>
         {data.events.map((e) => (
           <div key={e.id} className="timeline-item">
-            <span className="timeline-date">{e.at}</span>
+            <span className="timeline-date">{usDate(e.at)}</span>
             <span className="timeline-kind">{e.kind.replace('_', ' ')}</span>
             <span style={{ flex: 1 }}>{e.body}</span>
           </div>
@@ -579,7 +589,7 @@ function LicenseCard({ caseId }: { caseId: number }): React.JSX.Element | null {
       'Term',
       facts.termStart || facts.termEnd ? (
         <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {facts.termStart ?? '?'} → {facts.termEnd ?? '?'}
+          {facts.termStart ? usDate(facts.termStart) : '?'} → {facts.termEnd ? usDate(facts.termEnd) : '?'}
         </span>
       ) : (
         <span className="deadline-meta">not extracted</span>
@@ -892,7 +902,7 @@ function FilesCard({
       {shown.map((f) => (
         <div key={f.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
           <span className="deadline-date" style={{ minWidth: 84, fontSize: 12.5 }}>
-            {f.datedAt ?? f.mtime?.slice(0, 10) ?? '—'}
+            {usDate(f.datedAt ?? f.mtime?.slice(0, 10)) || '—'}
           </span>
           <span
             style={{ flex: 1, minWidth: 140, wordBreak: 'break-word' }}
@@ -1160,7 +1170,7 @@ function PaymentsCard({
               // The detail pane is narrow, so let a row wrap onto a second line
               // rather than pushing its buttons outside the card.
               <div key={p.id} className="deadline-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-                <span className="deadline-date">{p.receivedDate ?? p.dueDate ?? '—'}</span>
+                <span className="deadline-date">{usDate(p.receivedDate ?? p.dueDate) || '—'}</span>
                 <button
                   className="linklike"
                   title="Edit this payment"
@@ -1327,7 +1337,7 @@ function PaymentsCard({
           }}
         >
           <p style={{ margin: 0, fontSize: 13 }}>
-            <strong>{usd(cents)}</strong> on {form.date} is already on the ledger
+            <strong>{usd(cents)}</strong> on {usDate(form.date)} is already on the ledger
             {dup.sameCase ? ' for this case' : ` under “${dup.label}”`}. Adding it again would
             double-count the income.
           </p>
@@ -1529,7 +1539,7 @@ function MergeCase({
             <span style={{ flex: 1, minWidth: 140 }}>
               {c.title}
               <div className="deadline-meta">
-                {c.status} · opened {c.openedAt}
+                {c.status} · opened {usDate(c.openedAt)}
                 {c.licenseeName && ` · ${c.licenseeName}`}
               </div>
             </span>

@@ -9,6 +9,7 @@ import type {
   SignnowStatus,
   SignnowSyncNowResult
 } from '../../../shared/types'
+import { usDate } from '../../../shared/domain/deadlines'
 
 type AuthUiState =
   | { phase: 'idle' }
@@ -141,7 +142,7 @@ function SignnowCard(): React.JSX.Element {
             <>
               <span className="pill done">key stored</span> (encrypted, key in macOS Keychain).{' '}
               {status.lastSyncAt
-                ? `Last sync ${status.lastSyncAt.slice(0, 16).replace('T', ' ')} — ${status.lastSyncCursor}.`
+                ? `Last sync ${usDate(status.lastSyncAt)} ${status.lastSyncAt.slice(11, 16)} — ${status.lastSyncCursor}.`
                 : 'Not synced yet.'}
               {status.lastJobStatus && ` Nightly job: ${status.lastJobStatus}`}
             </>
