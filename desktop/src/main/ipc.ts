@@ -46,6 +46,8 @@ import {
 import { syncSignnow } from './services/signnowApi'
 import { extractionCounts, runExtraction } from './services/ingest/extractionRunner'
 import {
+  deleteLetter,
+  deleteSupersededLetters,
   generateLetter,
   getLetter,
   letterExhibits,
@@ -231,6 +233,15 @@ export function registerIpc(): void {
     }
   )
   ipcMain.handle('fafo:markLetterSent', (_e, letterId: number) => markLetterSent(db, letterId))
+  ipcMain.handle('fafo:deleteLetter', (_e, letterId: number) => {
+    deleteLetter(db, letterId)
+    return true
+  })
+  ipcMain.handle(
+    'fafo:deleteSupersededLetters',
+    (_e, caseId: number, kind: 'enforcement' | 'referral_summary') =>
+      deleteSupersededLetters(db, caseId, kind)
+  )
   ipcMain.handle('fafo:exportLetterToDrive', async (_e, letterId: number) => {
     const letter = getLetter(db, letterId)
     if (!letter) throw new Error(`Letter ${letterId} not found`)

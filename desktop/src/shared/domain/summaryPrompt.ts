@@ -11,6 +11,7 @@
  */
 
 import { MASTER_REF } from './masterRef'
+import { usDate } from './deadlines'
 
 export const SUMMARY_SYSTEM_PROMPT = `You are drafting a Legal Referral Summary for Paleo Certified, Inc. dba The Paleo Foundation per the FAFO SUMMARY v2.0 protocol. Output must be professional, precise, and counsel-ready. Populate every required section. Use formal legal language. Do not add preamble or commentary outside the document structure. Where case data is sparse, note what is unknown rather than fabricating details.`
 
@@ -83,19 +84,19 @@ export function renderEvidence(e: EvidenceManifest): string {
   }
   const lines = [
     `${e.total} files indexed` +
-      (e.earliest && e.latest ? `, dated ${e.earliest} to ${e.latest}` : ''),
+      (e.earliest && e.latest ? `, dated ${usDate(e.earliest)} to ${usDate(e.latest)}` : ''),
     'By kind: ' + e.byKind.map((k) => `${k.count} ${k.kind}`).join(', '),
   ]
   if (e.captureSessions.length) {
     lines.push(
       'Capture sessions (dated screenshot sets evidencing use): ' +
-        e.captureSessions.map((c) => `${c.date} (${c.count})`).join(', ')
+        e.captureSessions.map((c) => `${usDate(c.date)} (${c.count})`).join(', ')
     )
   }
   if (e.documents.length) {
     lines.push('Documents on file:')
     for (const d of e.documents) {
-      lines.push(`  - [${d.kind}] ${d.name}${d.date ? ` (${d.date})` : ''}`)
+      lines.push(`  - [${d.kind}] ${d.name}${d.date ? ` (${usDate(d.date)})` : ''}`)
     }
   }
   return lines.join('\n')
@@ -108,7 +109,7 @@ export function renderScreenshots(shots: ScreenshotExhibit[]): string {
   return shots
     .map(
       (s) =>
-        `Exhibit ${s.label} — ${s.platform ?? 'capture'}, ${s.date ?? 'date not recorded'} (${s.fileName})`
+        `Exhibit ${s.label} — ${s.platform ?? 'capture'}, ${s.date ? usDate(s.date) : 'date not recorded'} (${s.fileName})`
     )
     .join('\n')
 }
@@ -153,8 +154,8 @@ Trademark(s): ${c.trademarkNames.join('; ')}
 Infringement Type: ${c.caseType}
 Source / Platform: ${c.source}
 URL / Location: ${c.url || 'Not recorded'}
-Date Case Opened: ${c.dateOpened}
-Date of Referral: ${c.todayIso}
+Date Case Opened: ${usDate(c.dateOpened)}
+Date of Referral: ${usDate(c.todayIso)}
 Settlement Position: ${c.settlement || 'TBD'}
 ${resolvedBy}
 
@@ -183,7 +184,7 @@ REQUIRED OUTPUT STRUCTURE — follow exactly, populate every section:
 # LEGAL REFERRAL SUMMARY
 Trademark Infringement Matter
 Paleo Certified, Inc. dba The Paleo Foundation v. ${c.infringer}
-Date of Referral: ${c.todayIso}
+Date of Referral: ${usDate(c.todayIso)}
 
 DO NOT emit a protocol line, an internal case-opened date, a case-handler line,
 a referral-status line, or a classification line. The four header lines above are
@@ -213,15 +214,17 @@ ${section1b}
 [A dated list of what happened, drawn from CORRESPONDENCE ON RECORD and the case
 notes. One line per event, in exactly this form — date, hyphen, what happened:
 
-  1/27/22 - Sent renewal request as license expired on 2/23/22. (agreement has license expiring on 2/11/22).
-  3/29/22 - Sent followup email for renewal
-  9/27/22 - Found TBE Beverage products in an Erewhon in Venice, CA
-  9/28/22 - Sent email to TBE Beverages notifying them of the infringement
-  9/28/22 - Reply from TBE Beverages to renew certification
-  10/31/22 - Jordan leaves TBE Beverages and hands process over to Brenton Blanchard
-  12/1/22 - Followup with no response
+  01/27/2022 - Sent renewal request as license expired on 02/23/2022. (agreement has license expiring on 02/11/2022).
+  03/29/2022 - Sent followup email for renewal
+  09/27/2022 - Found TBE Beverage products in an Erewhon in Venice, CA
+  09/28/2022 - Sent email to TBE Beverages notifying them of the infringement
+  09/28/2022 - Reply from TBE Beverages to renew certification
+  10/31/2022 - Jordan leaves TBE Beverages and hands process over to Brenton Blanchard
+  12/01/2022 - Followup with no response
 
-Dates in M/D/YY. No commentary, no analysis, no significance, no labels, no
+Every date in this document is MM/DD/YYYY — zero-padded, four-digit year — in
+the timeline and everywhere else, including licence terms and capture dates. The
+case data above is already in that format; reproduce it as given. No commentary, no analysis, no significance, no labels, no
 flags, no bold, no table, no grouping headings, and no closing paragraph. When
 and what happened, nothing else — counsel draws the inferences.
 
@@ -268,6 +271,6 @@ position as they put it, with the date they put it, in a sentence or two.]
 [Flag duration, breadth, willfulness if second infringement. Recommend upward revision if warranted.]
 
 ---
-Prepared by: Jonathan D. Pendergrass, CLO | The Paleo Foundation | jonathand@paleofoundation.org | ${c.todayIso}
+Prepared by: Jonathan D. Pendergrass, CLO | The Paleo Foundation | jonathand@paleofoundation.org | ${usDate(c.todayIso)}
 FAFO Workflow | Paleo Certified, Inc. dba The Paleo Foundation`
 }

@@ -2,7 +2,15 @@ import Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from '../../db/migrations'
 import { seedIfEmpty } from '../../db/seed'
-import { latestCounterparty, letterToHtml, licenseFactsBlock } from '../letters'
+import {
+  deleteLetter,
+  deleteSupersededLetters,
+  latestCounterparty,
+  letterToHtml,
+  licenseFactsBlock,
+  listLetters
+} from '../letters'
+import { usDate } from '../../../shared/domain/deadlines'
 import { letterToDocument } from '../letterPdf'
 
 describe('letterToHtml (branded Drive export)', () => {
@@ -58,7 +66,7 @@ describe('local PDF/HTML document', () => {
     expect(doc).toContain('src="data:image/jpeg;base64,QUJD"')
     // Anything fetched at open time would break for counsel reading it offline.
     expect(doc).not.toMatch(/src="https?:|href="https?:|@import/)
-    expect(doc).toContain('Exhibit A — Amazon, captured 2026-08-05')
+    expect(doc).toContain('Exhibit A — Amazon, captured 08/05/2026')
   })
 })
 
@@ -72,7 +80,7 @@ describe('screenshot exhibits in the exported document', () => {
     const html = letterToHtml('R', '# 3. Evidence\n[[FAFO:SCREENSHOTS]]\n# 4. Settlement Position', shots)
     expect(html).toContain('<img data-fafo-image="A">')
     expect(html).toContain('<img data-fafo-image="B">')
-    expect(html).toContain('Exhibit A — Amazon, captured 2026-08-05')
+    expect(html).toContain('Exhibit A — Amazon, captured 08/05/2026')
     // A capture with no recoverable date says so rather than inventing one.
     expect(html).toContain('Exhibit B — Website, capture date not recorded')
     expect(html).not.toContain('FAFO:SCREENSHOTS')
@@ -109,7 +117,7 @@ describe('licenseFactsBlock', () => {
     const facts = licenseFactsBlock(db, caseIdFor('The Healthy Crunch Company'))
     expect(facts).toContain('VERIFIED LICENSE FACTS')
     expect(facts).toContain('§E.3.d.ii')
-    expect(facts).toContain('2026-05-25') // sell-off end = term end + 180d
+    expect(facts).toContain('05/25/2026') // sell-off end = term end + 180d
     expect(facts).toContain('4767643') // CP USPTO number
     expect(facts).toContain('CAVEAT') // CP is a service mark
   })
@@ -152,5 +160,70 @@ describe('latestCounterparty', () => {
     db.prepare("INSERT INTO case_events (case_id, at, kind, body) VALUES (901,'2026-01-02','email',?)")
       .run('Jonathan Pendergrass jonathand@paleofoundation.org: notice sent.')
     expect(latestCounterparty(db, 901)).toBeNull()
+  })
+})
+
+describe('deleting superseded drafts', () => {
+  function seedCase(): Database.Database {
+    const db = new Database(':memory:')
+    migrate(db)
+    seedIfEmpty(db)
+    db.prepare("INSERT INTO cases (id, title, type, status, source, opened_at) VALUES (910,'Z','Expired License','Open','Website','2026-01-01')").run()
+    return db
+  }
+  const add = (db: Database.Database, id: number, kind: string, drafted: string, sent?: string, drive?: string): void => {
+    db.prepare(
+      "INSERT INTO letters (id, case_id, kind, body_text, drafted_at, sent_at, doc_drive_id, status) VALUES (?,910,?,'body',?,?,?,'draft')"
+    ).run(id, kind, drafted, sent ?? null, drive ?? null)
+  }
+
+  it('keeps the newest and removes the rest', () => {
+    const db = seedCase()
+    add(db, 1, 'referral_summary', '2026-08-11')
+    add(db, 2, 'referral_summary', '2026-08-25')
+    add(db, 3, 'referral_summary', '2026-08-26')
+    const r = deleteSupersededLetters(db, 910, 'referral_summary')
+    expect(r).toEqual({ deleted: 2, keptOnRecord: 0, keptNewestId: 3 })
+    expect(listLetters(db, 910).map((l) => l.id)).toEqual([3])
+  })
+
+  it('never deletes a draft that was sent or exported', () => {
+    const db = seedCase()
+    add(db, 1, 'referral_summary', '2026-08-11', '2026-08-12')
+    add(db, 2, 'referral_summary', '2026-08-20', undefined, 'https://docs.google.com/x')
+    add(db, 3, 'referral_summary', '2026-08-25')
+    add(db, 4, 'referral_summary', '2026-08-26')
+    const r = deleteSupersededLetters(db, 910, 'referral_summary')
+    expect(r.deleted).toBe(1)
+    expect(r.keptOnRecord).toBe(2)
+    expect(listLetters(db, 910).map((l) => l.id).sort()).toEqual([1, 2, 4])
+  })
+
+  it('leaves the other kind of letter alone', () => {
+    const db = seedCase()
+    add(db, 1, 'enforcement', '2026-08-01')
+    add(db, 2, 'enforcement', '2026-08-02')
+    add(db, 3, 'referral_summary', '2026-08-03')
+    deleteSupersededLetters(db, 910, 'referral_summary')
+    expect(listLetters(db, 910).length).toBe(3)
+  })
+
+  it('deleteLetter removes exactly one and refuses an unknown id', () => {
+    const db = seedCase()
+    add(db, 1, 'referral_summary', '2026-08-11')
+    add(db, 2, 'referral_summary', '2026-08-26')
+    deleteLetter(db, 1)
+    expect(listLetters(db, 910).map((l) => l.id)).toEqual([2])
+    expect(() => deleteLetter(db, 99)).toThrow(/not found/)
+  })
+})
+
+describe('usDate', () => {
+  it('renders ISO as MM/DD/YYYY and passes anything else through', () => {
+    expect(usDate('2026-08-05')).toBe('08/05/2026')
+    expect(usDate('2026-08-05T17:00:00.000Z')).toBe('08/05/2026')
+    expect(usDate(null)).toBe('')
+    // Better an unparsed value than a confidently wrong date in a legal filing.
+    expect(usDate('sometime in April')).toBe('sometime in April')
   })
 })

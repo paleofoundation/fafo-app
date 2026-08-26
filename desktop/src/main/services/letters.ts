@@ -8,7 +8,7 @@ import {
   type EvidenceManifest,
   type ScreenshotExhibit
 } from '../../shared/domain/summaryPrompt'
-import { nextResponseThursday, selloffEnd } from '../../shared/domain/deadlines'
+import { nextResponseThursday, selloffEnd, usDate } from '../../shared/domain/deadlines'
 import { selectReferralScreenshots } from './referralShots'
 
 /**
@@ -97,7 +97,7 @@ function correspondenceLines(db: Database.Database, caseId: number): string[] {
          ORDER BY at ASC, id ASC`
       )
       .all(caseId) as Array<{ at: string; kind: string; body: string }>
-  ).map((e) => `[${e.at}] (${e.kind.replace('_', ' ')}) ${e.body}`)
+  ).map((e) => `[${usDate(e.at)}] (${e.kind.replace('_', ' ')}) ${e.body}`)
 }
 
 /** Open clocks counsel inherits with the matter. */
@@ -110,7 +110,7 @@ function deadlineLines(db: Database.Database, caseId: number): string[] {
          ORDER BY due_at ASC`
       )
       .all(caseId) as Array<{ dueAt: string; kind: string; title: string }>
-  ).map((d) => `[due ${d.dueAt}] (${d.kind.replace('_', ' ')}) ${d.title}`)
+  ).map((d) => `[due ${usDate(d.dueAt)}] (${d.kind.replace('_', ' ')}) ${d.title}`)
 }
 
 
@@ -233,7 +233,7 @@ function caseInputs(db: Database.Database, caseId: number): {
          FROM payments WHERE case_id = ? ORDER BY date`
       )
       .all(caseId) as Array<{ cents: number; date: string | null; received: number }>
-  ).map((p) => `$${(p.cents / 100).toLocaleString()} on ${p.date ?? '?'} — ${p.received ? 'received' : 'pending'}`)
+  ).map((p) => `$${(p.cents / 100).toLocaleString()} on ${p.date ? usDate(p.date) : '?'} — ${p.received ? 'received' : 'pending'}`)
 
   // Correspondence outranks the licensee record — see latestCounterparty.
   const current = latestCounterparty(db, caseId)
@@ -249,7 +249,7 @@ function caseInputs(db: Database.Database, caseId: number): {
     resolvedBy: c.resolvedBy,
     trademarkNames: markNames.length > 0 ? markNames : ['(marks per case file)'],
     notes: events.map((e) => e.body),
-    noteLines: events.map((e) => `[${e.at}] ${e.body}`),
+    noteLines: events.map((e) => `[${usDate(e.at)}] ${e.body}`),
     payments,
     evidence: evidenceManifest(db, caseId),
     correspondence: correspondenceLines(db, caseId),
@@ -311,7 +311,7 @@ export function licenseFactsBlock(db: Database.Database, caseId: number): string
     if (lic.address) lines.push(`Licensee address of record: ${lic.address}`)
     if (lic.ref) lines.push(`Agreement on file: ${lic.ref.replace('signnow:', '')}`)
     if (lic.termStart || lic.termEnd) {
-      lines.push(`License term: ${lic.termStart ?? 'unknown'} through ${lic.termEnd ?? 'unknown'}`)
+      lines.push(`License term: ${lic.termStart ? usDate(lic.termStart) : 'unknown'} through ${lic.termEnd ? usDate(lic.termEnd) : 'unknown'}`)
     }
     if (lic.feeCents !== null) {
       lines.push(
@@ -322,8 +322,8 @@ export function licenseFactsBlock(db: Database.Database, caseId: number): string
       const so = selloffEnd(lic.termEnd, lic.vintage === '2020' ? '2020' : '2025')
       lines.push(
         lic.vintage === '2020'
-          ? `Agreement vintage: 2020 legacy — NO liquidated damages clause and NO sell-off period (immediate cessation required at ${lic.termEnd}). Anchor any settlement to the current pricing schedule, not a contractual formula.`
-          : `Agreement vintage: current template — §E.3.d.ii liquidated damages (one year's fee per month of continued misuse) and §E.3.c 180-day sell-off applying to physical inventory only, ending ${so}. Digital channels required immediate remediation at ${lic.termEnd}.`
+          ? `Agreement vintage: 2020 legacy — NO liquidated damages clause and NO sell-off period (immediate cessation required at ${usDate(lic.termEnd)}). Anchor any settlement to the current pricing schedule, not a contractual formula.`
+          : `Agreement vintage: current template — §E.3.d.ii liquidated damages (one year's fee per month of continued misuse) and §E.3.c 180-day sell-off applying to physical inventory only, ending ${usDate(so)}. Digital channels required immediate remediation at ${usDate(lic.termEnd)}.`
       )
     }
     if (lic.confidence !== null && lic.confidence < 0.7) {
@@ -414,6 +414,68 @@ export async function generateLetter(
       .lastInsertRowid
   )
   return getLetter(db, id)
+}
+
+
+export interface SupersededSweep {
+  /** Drafts removed. */
+  deleted: number
+  /** Left alone because they were sent or exported — those are record. */
+  keptOnRecord: number
+  /** The draft that survives as current. */
+  keptNewestId: number | null
+}
+
+/**
+ * Delete one letter.
+ *
+ * No case_event is written. A discarded draft is not case history, and a note
+ * saying one was deleted would be exactly the kind of internal housekeeping
+ * that has to be filtered back out of the next referral.
+ */
+export function deleteLetter(db: Database.Database, id: number): void {
+  const row = db.prepare('SELECT id FROM letters WHERE id = ?').get(id) as
+    | { id: number }
+    | undefined
+  if (!row) throw new Error(`Letter ${id} not found`)
+  db.prepare('DELETE FROM letters WHERE id = ?').run(id)
+}
+
+/**
+ * Clear out superseded drafts of one kind on a case, keeping the newest.
+ *
+ * Regenerating a referral leaves the previous attempt behind — Awake Chocolate
+ * had four. Anything sent or exported to Drive is left alone whatever its age:
+ * that is a record of what went out, not a draft.
+ */
+export function deleteSupersededLetters(
+  db: Database.Database,
+  caseId: number,
+  kind: LetterKind
+): SupersededSweep {
+  const rows = db
+    .prepare(
+      `SELECT id, sent_at AS sentAt, doc_drive_id AS docUrl FROM letters
+       WHERE case_id = ? AND kind = ?
+       ORDER BY drafted_at DESC, id DESC`
+    )
+    .all(caseId, kind) as Array<{ id: number; sentAt: string | null; docUrl: string | null }>
+  if (rows.length === 0) return { deleted: 0, keptOnRecord: 0, keptNewestId: null }
+
+  const newest = rows[0]!
+  const onRecord = (r: (typeof rows)[number]): boolean => r.sentAt !== null || r.docUrl !== null
+  const doomed = rows.slice(1).filter((r) => !onRecord(r))
+
+  const del = db.prepare('DELETE FROM letters WHERE id = ?')
+  db.transaction(() => {
+    for (const r of doomed) del.run(r.id)
+  })()
+
+  return {
+    deleted: doomed.length,
+    keptOnRecord: rows.slice(1).length - doomed.length,
+    keptNewestId: newest.id
+  }
 }
 
 export function getLetter(db: Database.Database, id: number): LetterRow {
@@ -591,7 +653,7 @@ export function letterToHtml(
       }
       if (ex) {
         const where = ex.platform ? `${ex.platform}, ` : ''
-        const when = ex.date ? `captured ${ex.date}` : 'capture date not recorded'
+        const when = ex.date ? `captured ${usDate(ex.date)}` : 'capture date not recorded'
         out.push(
           `<p style="color:${SLATE}"><em>Exhibit ${esc(ex.label)} — ${esc(where)}${esc(when)}</em></p>`
         )

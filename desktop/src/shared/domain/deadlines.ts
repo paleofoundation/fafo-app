@@ -8,6 +8,19 @@ export type AgreementVintage = '2020' | '2025'
 
 export const SELL_OFF_DAYS = 180
 
+/**
+ * ISO date → MM/DD/YYYY, the format the referral reads in.
+ *
+ * Pass-through for anything that is not a plain ISO date: a value we cannot
+ * parse is shown as it was stored rather than silently mangled into a wrong
+ * date, which in a legal document is worse than an ugly one.
+ */
+export function usDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : iso
+}
+
 export function addDays(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`)
   if (Number.isNaN(d.getTime())) throw new Error(`Invalid date: ${isoDate}`)

@@ -738,6 +738,12 @@ export interface FafoApi {
   generateLetter(caseId: number, kind: 'enforcement' | 'referral_summary'): Promise<LetterView>
   markLetterSent(letterId: number): Promise<LetterView>
   exportLetterToDrive(letterId: number): Promise<LetterView>
+  deleteLetter(letterId: number): Promise<boolean>
+  /** Drop superseded drafts of one kind, keeping the newest and anything sent. */
+  deleteSupersededLetters(
+    caseId: number,
+    kind: 'enforcement' | 'referral_summary'
+  ): Promise<{ deleted: number; keptOnRecord: number; keptNewestId: number | null }>
   saveLetterToFile(letterId: number): Promise<string | null>
   /** Render the letter to a PDF locally — no Drive, captures embedded. */
   saveLetterToPdf(letterId: number): Promise<string | null>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   CaseDeletionPreview,
   CaseEvent,
@@ -20,6 +20,7 @@ import type {
   SettlementQuote
 } from '../../../shared/types'
 import { CASE_SOURCES, CASE_TYPES } from '../../../shared/types'
+import { usDate } from '../../../shared/domain/deadlines'
 
 const STATUS_PILL: Record<CaseStatus, string> = {
   Open: 'open',
@@ -1846,6 +1847,19 @@ function LettersCard({
     setLetters(await window.fafo.listLetters(caseId))
   }, [caseId])
 
+  // Drafts a newer one of the same kind has replaced. Sent or exported letters
+  // are never superseded — they are a record of what actually went out.
+  const superseded = useMemo(() => {
+    const newest = new Map<string, number>()
+    for (const l of letters) {
+      const best = newest.get(l.kind)
+      if (best === undefined || l.draftedAt > letters.find((x) => x.id === best)!.draftedAt) {
+        newest.set(l.kind, l.id)
+      }
+    }
+    return letters.filter((l) => newest.get(l.kind) !== l.id && !l.sentAt && !l.docUrl).length
+  }, [letters])
+
   useEffect(() => {
     void load()
   }, [load])
@@ -1885,6 +1899,30 @@ function LettersCard({
         >
           {busy === 'summary' ? 'Drafting…' : 'Draft Trestle referral'}
         </button>
+        {superseded > 0 && (
+          <button
+            className="subtle"
+            disabled={busy !== null}
+            title="Delete every superseded draft, keeping the newest of each kind. Anything sent or exported to Drive is left alone."
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `Delete ${superseded} superseded draft${superseded === 1 ? '' : 's'}?\n\n` +
+                    'The newest of each kind is kept, along with anything already sent or ' +
+                    'exported to Drive.'
+                )
+              )
+                return
+              void act('sweep', async () => {
+                for (const kind of ['enforcement', 'referral_summary'] as const) {
+                  await window.fafo.deleteSupersededLetters(caseId, kind)
+                }
+              })
+            }}
+          >
+            {busy === 'sweep' ? 'Deleting…' : `Delete ${superseded} older draft${superseded === 1 ? '' : 's'}`}
+          </button>
+        )}
       </div>
       {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: 12.5 }}>{error}</p>}
       {letters.length === 0 && <div className="empty">No drafts yet.</div>}
@@ -1897,12 +1935,12 @@ function LettersCard({
             <span className={`pill ${l.status === 'responded' ? 'done' : l.status === 'sent' ? 'progress' : 'later'}`}>
               {l.status}
             </span>
-            <span className="deadline-meta">drafted {l.draftedAt}</span>
+            <span className="deadline-meta">drafted {usDate(l.draftedAt)}</span>
             {l.responseDueAt && !l.responseReceivedAt && (
-              <span className="deadline-meta">· response due {l.responseDueAt}</span>
+              <span className="deadline-meta">· response due {usDate(l.responseDueAt)}</span>
             )}
             {l.responseReceivedAt && (
-              <span className="deadline-meta">· replied {l.responseReceivedAt}</span>
+              <span className="deadline-meta">· replied {usDate(l.responseReceivedAt)}</span>
             )}
             <span style={{ flex: 1 }} />
             <button className="subtle" onClick={() => setOpen(open === l.id ? null : l.id)}>
@@ -1932,6 +1970,25 @@ function LettersCard({
                 {busy === `drive-${l.id}` ? 'Exporting…' : 'Export to Drive'}
               </button>
             )}
+            <button
+              className="subtle"
+              disabled={busy !== null}
+              style={{ color: 'var(--danger)' }}
+              title="Delete this draft"
+              onClick={() => {
+                const warn =
+                  l.sentAt || l.docUrl
+                    ? '\n\nThis one is on record — it was ' +
+                      (l.sentAt ? `sent ${usDate(l.sentAt)}` : 'exported to Drive') +
+                      '. Deleting it removes FAFO\u2019s copy of what went out.'
+                    : ''
+                if (!window.confirm(`Delete this ${l.kind === 'enforcement' ? 'letter' : 'referral'} drafted ${usDate(l.draftedAt)}?${warn}`))
+                  return
+                void act(`del-${l.id}`, () => window.fafo.deleteLetter(l.id))
+              }}
+            >
+              {busy === `del-${l.id}` ? 'Deleting…' : 'Delete'}
+            </button>
             {/* Drive depends on a Cloud Run service and a Google token that has
                 expired twice. A referral summary counsel is waiting on must not
                 be stuck behind that, so both local formats are always available

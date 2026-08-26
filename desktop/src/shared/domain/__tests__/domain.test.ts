@@ -322,7 +322,7 @@ describe('referral evidence manifest', () => {
   it('collapses screenshots to capture sessions but names each document', () => {
     const out = renderEvidence(manifest)
     expect(out).toContain('43 files indexed')
-    expect(out).toContain('2026-06-02 (12)')
+    expect(out).toContain('06/02/2026 (12)')
     expect(out).toContain('Awake Chocolate License Agreement 2025.pdf')
     // The point of sessions: dates, not 38 PNG filenames.
     expect(out).not.toContain('.png')
@@ -358,6 +358,6 @@ describe('referral evidence manifest', () => {
     expect(p).toContain('sell-off window closes')
     // The rule that keeps counsel from being told a gap exists that does not.
     expect(p).toContain('not in the record provided')
-    expect(p).toContain('Exhibit A — Amazon, 2026-08-05')
+    expect(p).toContain('Exhibit A — Amazon, 08/05/2026')
   })
 })

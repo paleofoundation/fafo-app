@@ -48,6 +48,9 @@ const api: FafoApi = {
   listLetters: (caseId) => ipcRenderer.invoke('fafo:listLetters', caseId),
   generateLetter: (caseId, kind) => ipcRenderer.invoke('fafo:generateLetter', caseId, kind),
   markLetterSent: (letterId) => ipcRenderer.invoke('fafo:markLetterSent', letterId),
+  deleteLetter: (letterId) => ipcRenderer.invoke('fafo:deleteLetter', letterId),
+  deleteSupersededLetters: (caseId, kind) =>
+    ipcRenderer.invoke('fafo:deleteSupersededLetters', caseId, kind),
   exportLetterToDrive: (letterId) => ipcRenderer.invoke('fafo:exportLetterToDrive', letterId),
   saveLetterToFile: (letterId) => ipcRenderer.invoke('fafo:saveLetterToFile', letterId),
   saveLetterToPdf: (letterId) => ipcRenderer.invoke('fafo:saveLetterToPdf', letterId),

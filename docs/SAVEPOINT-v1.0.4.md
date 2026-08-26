@@ -64,6 +64,17 @@ after **~7 days** (≈ June 19, 2026). When Drive calls start failing:
     https://console.cloud.google.com/auth/audience?project=project-b0292460-be69-4b2e-b3c
     → *Publishing status: Testing* → **PUBLISH APP**.
 
+### Never `cp` the database to inspect it (2026-08-27)
+
+fafo.sqlite runs in WAL mode, so recent writes live in `fafo.sqlite-wal` and a
+plain `cp` of the .sqlite file alone silently yields a stale snapshot. A copy
+taken that way showed two of four referral drafts and made a verification run
+look like it had found a bug that did not exist. Use:
+
+```
+sqlite3 ~/Library/Application\ Support/FAFO/fafo.sqlite ".backup /tmp/copy.db"
+```
+
 ### Publishing does not rescue a token already minted (2026-08-26)
 
 The refresh token minted on 2026-08-11 died anyway, and Drive export failed with
