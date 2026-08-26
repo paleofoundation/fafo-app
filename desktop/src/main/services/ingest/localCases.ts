@@ -90,7 +90,13 @@ function classifyFile(filePath: string, parentLabel: string | null): ScannedFile
   if (/agreement/.test(base)) return 'agreement'
   if (/(complaint|motion|declaration|proposed order|judgment)/.test(base)) return 'court'
   if (/(c&d|cease|demand|notice of infringement|termination|settlement)/.test(base)) return 'letter'
-  if (parentLabel && /email/i.test(parentLabel) && ['.pdf', '.docx'].includes(ext)) return 'email'
+  if (parentLabel && ['.pdf', '.docx', '.doc'].includes(ext)) {
+    // The per-case dump folders: Email/ holds correspondence, Legal/ and
+    // Settlement/ hold counsel traffic and settlement revisions. Filed by
+    // folder rather than by filename, so the folder is what classifies them.
+    if (/email/i.test(parentLabel)) return 'email'
+    if (/^(legal|settlement|termination|trestle|litigation)/i.test(parentLabel)) return 'letter'
+  }
   return 'other'
 }
 
