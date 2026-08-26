@@ -64,6 +64,28 @@ after **~7 days** (≈ June 19, 2026). When Drive calls start failing:
     https://console.cloud.google.com/auth/audience?project=project-b0292460-be69-4b2e-b3c
     → *Publishing status: Testing* → **PUBLISH APP**.
 
+### Deploying docs-mcp strips the public invoker if you pass the auth flag (2026-08-27)
+
+`gcloud run deploy fafo-docs-mcp --no-allow-unauthenticated` removes the
+`allUsers` + `roles/run.invoker` binding every time — and the desktop app,
+which cannot mint a Google identity token, then gets 403 on every Drive export
+(the shared secret is the real gate; the public invoker is just the outer door).
+This has bitten three times. **Deploy without touching IAM** — omit both
+`--allow-unauthenticated` and `--no-allow-unauthenticated`:
+
+```
+gcloud run deploy fafo-docs-mcp --source . --region us-central1 --memory 1Gi --quiet
+```
+
+If it was already stripped, re-add it (this is the only thing that unblocks the app):
+
+```
+gcloud run services add-iam-policy-binding fafo-docs-mcp --region us-central1 --member=allUsers --role=roles/run.invoker
+```
+
+To verify the service yourself without reopening it, call it with your own
+identity token as Bearer plus the X-FAFO-Key header.
+
 ### Never `cp` the database to inspect it (2026-08-27)
 
 fafo.sqlite runs in WAL mode, so recent writes live in `fafo.sqlite-wal` and a

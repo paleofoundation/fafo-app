@@ -211,7 +211,7 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
     expect(p).toContain('Second infringement')
   })
 
-  it('SUMMARY prompt contains the four v2.0 sections and none of the cut ones', () => {
+  it('SUMMARY prompt lays out the seven house-standard sections', () => {
     const p = buildSummaryUserPrompt({
       infringer: 'Little West (WS West LLC)',
       contact: null,
@@ -239,28 +239,26 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       screenshots: []
     })
     for (const section of [
-      '# 1. Contact and License',
-      '## 1a. Infringing Party',
-      '# 2. Correspondence Timeline',
-      '# 3. Evidence',
-      '# 4. Settlement Position'
+      '# 1. Parties',
+      '## Licensor / Complainant',
+      '## Respondent',
+      '# 2. Background',
+      '# 3. Infringement',
+      '# 4. Correspondence Timeline',
+      '# 5. Defenses Raised and Rebuttals',
+      '# 6. Current Settlement Position',
+      '# 7. Evidence on File'
     ]) {
       expect(p).toContain(section)
     }
-    expect(p).not.toContain('3a. Files on Record')
-    for (const cut of [
-      '# 2. Background',
-      '# 3. Infringement',
-      'Defenses Raised',
-      'Recommended Counsel Actions',
-      'Licensor / Complainant',
-      'Protocol: SUMMARY'
-    ]) {
+    // The header noise the artifact era carried is still gone.
+    for (const cut of ['Protocol:', 'Internal Case Opened', 'Case Handler', 'Referral Status']) {
       expect(p).not.toContain(cut)
     }
+    expect(p).toContain('# LEGAL REFERRAL SUMMARY')
   })
 
-  it('gives a licence its term and fee, and an acquisition neither', () => {
+  it('includes the acquisition subsection only for a change-of-ownership matter', () => {
     const base = {
       infringer: 'Acme', contact: null, contactEmail: null,
       trademarkNames: ['CERTIFIED P PALEO'], source: 'Website', url: null,
@@ -269,16 +267,10 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       payments: [], screenshots: [],
       evidence: { total: 0, byKind: [], documents: [], captureSessions: [], earliest: null, latest: null }
     }
-    const expired = buildSummaryUserPrompt({ ...base, caseType: 'Expired License' })
-    expect(expired).toContain('## 1b. License')
-    expect(expired).toContain('**License Fee:**')
-    expect(expired).not.toContain('Asset Acquisition')
-
-    const acquired = buildSummaryUserPrompt({
-      ...base, caseType: 'Unlicensed Use - Change in Ownership'
-    })
-    expect(acquired).toContain('## 1b. Asset Acquisition / Change of Ownership')
-    expect(acquired).not.toContain('**License Fee:**')
+    const acquired = buildSummaryUserPrompt({ ...base, caseType: 'Unlicensed Use - Change in Ownership' })
+    expect(acquired).toContain('## Asset Acquisition / Change of Ownership')
+    // Instruction to omit it otherwise is present for the drafter to act on.
+    expect(acquired).toContain('Omit entirely otherwise')
   })
 
   it('tells the drafter to leave the timeline unflagged and unglossed', () => {
@@ -290,10 +282,8 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       payments: [], screenshots: [],
       evidence: { total: 0, byKind: [], documents: [], captureSessions: [], earliest: null, latest: null }
     })
-    expect(p).toContain('No commentary, no analysis, no significance, no labels')
+    expect(p).toContain('Do not add flags, tags or an')
     expect(p).toContain('DO NOT emit a protocol line')
-    // The manifest is grounding for the drafter, never a section for counsel.
-    expect(p).toContain('Do NOT reproduce the EVIDENCE ON FILE block')
   })
 })
 

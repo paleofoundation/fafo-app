@@ -23,19 +23,22 @@ app.use(express.json({ limit: "25mb" }));
 
 const CASES_FOLDER_ID = process.env.CASES_FOLDER_ID || "1IiHLmNCNjk0e8LZTF_1LaSxDaIiuf-PZ";
 
-// Brand colors from CP_License_Agreement_2026.pages pixel analysis
+// Referral house style — the two-tone blue heading scale from the approved
+// artifact-era document, kept identical to the local PDF renderer (letterPdf.ts).
 const COLORS = {
-  navy:    { red: 0.149, green: 0.212, blue: 0.424 }, // #26366C — H1/H2
-  slate:   { red: 0.169, green: 0.208, blue: 0.251 }, // #2B3540 — H3
-  body:    { red: 0.102, green: 0.102, blue: 0.102 }, // #1A1A1A — body text
+  navy:    { red: 0.122, green: 0.220, blue: 0.392 }, // #1F3864 — H1
+  h2blue:  { red: 0.180, green: 0.329, blue: 0.588 }, // #2E5496 — H2
+  slate:   { red: 0.125, green: 0.141, blue: 0.169 }, // #20242B — H3
+  body:    { red: 0.125, green: 0.141, blue: 0.169 }, // #20242B — body text
+  mute:    { red: 0.353, green: 0.400, blue: 0.447 }, // #5A6672 — title subtitle
   orange:  { red: 0.847, green: 0.388, blue: 0.239 }, // #D8633D — WHEREAS/keywords
-  divider: { red: 0.784, green: 0.784, blue: 0.784 }, // #C8C8C8 — rule lines
+  divider: { red: 0.180, green: 0.329, blue: 0.588 }, // #2E5496 — rule lines
   topbar:  { red: 0.886, green: 0.894, blue: 0.937 }, // #E2E4EF — header band
 };
 
-// Fonts — primary (requires install on client) / fallback (universal)
-const FONT_HEADING = "Georgia";   // FreightText Pro Book fallback
-const FONT_BODY    = "Calibri";   // Avenir Next Regular fallback
+// A clean sans, matching the reference (Aptos) and the local PDF.
+const FONT_HEADING = "Calibri";
+const FONT_BODY    = "Calibri";
 
 async function getClients(userToken) {
   if (userToken) {
@@ -162,6 +165,12 @@ function buildRequests(tokens, staged) {
   const requests = [];
   let idx = 1;
   const styleQueue = [];
+  // Title block = the leading tokens up to the first numbered section ("1. …").
+  // They render centered: the title line, the "v." party stack, the date.
+  const numbered = (t) => /^h[1-3]$/.test(t.tag) && /^\d+\.\s/.test((t.text || "").trim());
+  let firstNumbered = tokens.findIndex(numbered);
+  if (firstNumbered < 0) firstNumbered = 0;
+  tokens.forEach((t, i) => { t.inTitle = i < firstNumbered; });
   for (const token of tokens) {
     if (token.tag === "image") {
       const img = images[token.imageId];
@@ -194,7 +203,7 @@ function buildRequests(tokens, staged) {
     }
     const blockText = token.text + "\n";
     requests.push({ insertText: { location: { index: idx }, text: blockText } });
-    styleQueue.push({ type: "block", tag: token.tag, inlines: token.inlines,
+    styleQueue.push({ type: "block", tag: token.tag, inlines: token.inlines, inTitle: token.inTitle,
       startIndex: idx, endIndex: idx + blockText.length - 1, blockEndIndex: idx + blockText.length });
     idx += blockText.length;
   }
@@ -212,22 +221,27 @@ function buildRequests(tokens, staged) {
           spaceAbove: { magnitude: 8, unit: "PT" }, spaceBelow: { magnitude: 8, unit: "PT" } },
         fields: "borderBottom,spaceAbove,spaceBelow" } }); continue;
     }
-    const { tag, inlines, startIndex, endIndex, blockEndIndex } = s;
+    const { tag, inlines, startIndex, endIndex, blockEndIndex, inTitle } = s;
     if (tag === "h1") {
+      // The very first h1 is the centered document title; a numbered "1." h1 is
+      // a section heading.
+      const isTitle = inTitle;
       requests.push({ updateParagraphStyle: { range: { startIndex, endIndex: blockEndIndex },
-        paragraphStyle: { namedStyleType: "HEADING_1", spaceAbove: { magnitude: 20, unit: "PT" }, spaceBelow: { magnitude: 6, unit: "PT" } },
-        fields: "namedStyleType,spaceAbove,spaceBelow" } });
+        paragraphStyle: { namedStyleType: "HEADING_1",
+          alignment: isTitle ? "CENTER" : "START",
+          spaceAbove: { magnitude: isTitle ? 4 : 20, unit: "PT" }, spaceBelow: { magnitude: isTitle ? 2 : 6, unit: "PT" } },
+        fields: "namedStyleType,alignment,spaceAbove,spaceBelow" } });
       requests.push({ updateTextStyle: { range: { startIndex, endIndex },
-        textStyle: { foregroundColor: { color: { rgbColor: COLORS.navy } }, fontSize: { magnitude: 22, unit: "PT" },
-          bold: false, weightedFontFamily: { fontFamily: FONT_HEADING } },
+        textStyle: { foregroundColor: { color: { rgbColor: COLORS.navy } }, fontSize: { magnitude: isTitle ? 17 : 14, unit: "PT" },
+          bold: true, weightedFontFamily: { fontFamily: FONT_HEADING } },
         fields: "foregroundColor,fontSize,bold,weightedFontFamily" } });
     } else if (tag === "h2") {
       requests.push({ updateParagraphStyle: { range: { startIndex, endIndex: blockEndIndex },
-        paragraphStyle: { namedStyleType: "HEADING_2", spaceAbove: { magnitude: 16, unit: "PT" }, spaceBelow: { magnitude: 4, unit: "PT" } },
+        paragraphStyle: { namedStyleType: "HEADING_2", spaceAbove: { magnitude: 14, unit: "PT" }, spaceBelow: { magnitude: 3, unit: "PT" } },
         fields: "namedStyleType,spaceAbove,spaceBelow" } });
       requests.push({ updateTextStyle: { range: { startIndex, endIndex },
-        textStyle: { foregroundColor: { color: { rgbColor: COLORS.navy } }, fontSize: { magnitude: 16, unit: "PT" },
-          bold: false, weightedFontFamily: { fontFamily: FONT_HEADING } },
+        textStyle: { foregroundColor: { color: { rgbColor: COLORS.h2blue } }, fontSize: { magnitude: 12, unit: "PT" },
+          bold: true, weightedFontFamily: { fontFamily: FONT_HEADING } },
         fields: "foregroundColor,fontSize,bold,weightedFontFamily" } });
     } else if (tag === "h3") {
       requests.push({ updateParagraphStyle: { range: { startIndex, endIndex: blockEndIndex },
@@ -241,8 +255,15 @@ function buildRequests(tokens, staged) {
       if (tag === "bullet") {
         requests.push({ createParagraphBullets: { range: { startIndex, endIndex: blockEndIndex }, bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
       }
+      // Title-block paragraphs (subtitle, "v.", date) are centered and muted;
+      // the bold party names carry their own bold run below.
+      if (inTitle) {
+        requests.push({ updateParagraphStyle: { range: { startIndex, endIndex: blockEndIndex },
+          paragraphStyle: { alignment: "CENTER", spaceAbove: { magnitude: 1, unit: "PT" }, spaceBelow: { magnitude: 1, unit: "PT" } },
+          fields: "alignment,spaceAbove,spaceBelow" } });
+      }
       requests.push({ updateTextStyle: { range: { startIndex, endIndex },
-        textStyle: { foregroundColor: { color: { rgbColor: COLORS.body } }, fontSize: { magnitude: 10.5, unit: "PT" },
+        textStyle: { foregroundColor: { color: { rgbColor: inTitle ? COLORS.mute : COLORS.body } }, fontSize: { magnitude: 10.5, unit: "PT" },
           bold: false, italic: false, weightedFontFamily: { fontFamily: FONT_BODY } },
         fields: "foregroundColor,fontSize,bold,italic,weightedFontFamily" } });
       if (inlines) {

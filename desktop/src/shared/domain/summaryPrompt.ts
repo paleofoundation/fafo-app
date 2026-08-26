@@ -179,98 +179,118 @@ Payments: ${paymentsText}
 MASTER REFERENCE CONTEXT:
 ${MASTER_REF}
 
-REQUIRED OUTPUT STRUCTURE — follow exactly, populate every section:
+REQUIRED OUTPUT STRUCTURE — follow this seven-section format exactly. It is the
+Paleo Foundation house standard for a legal referral. Populate every section from
+the case data above. Be economical: every sentence must carry a fact or an
+argument — no throat-clearing, no restating the obvious, no filler. Aim for the
+density of a good memo, not the length of a brief.
+
+Emit the title block exactly as these six lines, each on its own line, nothing
+else before them:
 
 # LEGAL REFERRAL SUMMARY
 Trademark Infringement Matter
-Paleo Certified, Inc. dba The Paleo Foundation v. ${c.infringer}
+**Paleo Certified, Inc. dba The Paleo Foundation**
+v.
+**${c.infringer}**
 Date of Referral: ${usDate(c.todayIso)}
 
-DO NOT emit a protocol line, an internal case-opened date, a case-handler line,
-a referral-status line, or a classification line. The four header lines above are
-the entire header. Do not add sections, appendices or a table of contents beyond
-the four numbered sections specified below.
+DO NOT emit a protocol line, an internal case-opened date, a case-handler line, a
+referral-status line, or a classification line.
 
 EVIDENTIARY RULE — this document is relied on by outside counsel:
 Distinguish "not in the record provided" from "does not exist". Where a fact is
 absent from the case data above, write that it is not in the record and should be
 confirmed — never assert that a thing did not happen, was never sent, or is
-missing from the file. Do not characterise the record as deficient on the basis of
-data you were not given. Facts supplied above (licensee name, address, term dates,
-fee, evidence counts and dates) are extracted from source documents: reproduce them
-verbatim rather than inferring or restating them approximately.
+missing from the file. Facts supplied above (entity name, address, term dates,
+fee, correspondence, evidence counts and dates) are extracted from source
+documents: reproduce them verbatim rather than inferring or restating them
+approximately. Every date is MM/DD/YYYY.
 
-# 1. Contact and License
-## 1a. Infringing Party
-**Entity Name:** [legal entity name]
-**Address:** [full address from the verified licence facts, verbatim]
-**Contact:** [named individual]
-**Email:** [email address]
-[These four fields only. Do not add jurisdiction, entity form, website, business
-description, or officers to this subsection.]
-${section1b}
+# 1. Parties
+## Licensor / Complainant
+**Name:** Paleo Certified, Inc. dba The Paleo Foundation
+**Contact:** Jonathan D. Pendergrass, CLO | Legal
+**Email:** jonathand@paleofoundation.org
+**Website:** https://paleofoundation.com/
+## Respondent
+[Bold-labelled lines, one per line, drawn from the case data: **Legal Entity**,
+**Operating Name** (if it trades under a different name), **Jurisdiction**,
+**Primary Contact** (name and email), **Secondary Contact** (if a second person
+is on the correspondence), **Websites**. Use the verified facts and the latest
+correspondence; omit a label rather than guessing at it.]
 
-# 2. Correspondence Timeline
-[A dated list of what happened, drawn from CORRESPONDENCE ON RECORD and the case
-notes. One line per event, in exactly this form — date, hyphen, what happened:
+# 2. Background
+## Original License Agreement
+[Who signed the agreement, on what date, in what capacity, for which mark. Name
+the signatory personally where the record gives it — signatory continuity is a
+liability argument. Then the key provisions relevant to THIS matter as a short
+bulleted list, each citing its section (e.g. sell-off / effect of termination /
+sale-of-business clauses).]
+## License Expiration or Termination
+[The expiry or termination date and how it happened. Any dated confirmation from
+the respondent's side of intent to discontinue.]
+## Asset Acquisition / Change of Ownership
+[Include this subsection ONLY for a change-of-ownership matter. What was acquired,
+from whom, when, and whether a new agreement was executed as the sale-of-business
+clause required. Draw the knowledge/continuity argument the record supports —
+a signatory of the original agreement now at the acquirer, a public "our story"
+page acknowledging the brand's certified heritage. Omit entirely otherwise.]
 
-  01/27/2022 - Sent renewal request as license expired on 02/23/2022. (agreement has license expiring on 02/11/2022).
-  03/29/2022 - Sent followup email for renewal
-  09/27/2022 - Found TBE Beverage products in an Erewhon in Venice, CA
-  09/28/2022 - Sent email to TBE Beverages notifying them of the infringement
-  09/28/2022 - Reply from TBE Beverages to renew certification
-  10/31/2022 - Jordan leaves TBE Beverages and hands process over to Brenton Blanchard
-  12/01/2022 - Followup with no response
+# 3. Infringement
+## Nature and Duration of Unauthorized Use
+[The window of unauthorized use with both endpoints as dates and the span in
+months, then the platforms and URLs where the mark was used, as a bulleted list.]
+## Evidence of Knowledge and Commercial Benefit
+[What in the record shows the respondent knew of the mark and its obligations,
+and that the mark was doing commercial work — a customer-facing FAQ addressing
+the certification, packaging, retail listings, dated social posts.]
+## Standards Violation
+[Any use that violates a specific licence provision — the mark shown beside
+non-certified products, etc. Cite the section. Omit if the record has none.]
 
-Every date in this document is MM/DD/YYYY — zero-padded, four-digit year — in
-the timeline and everywhere else, including licence terms and capture dates. The
-case data above is already in that format; reproduce it as given. No commentary, no analysis, no significance, no labels, no
-flags, no bold, no table, no grouping headings, and no closing paragraph. When
-and what happened, nothing else — counsel draws the inferences.
-
-Include: renewal correspondence and expiry notices; the termination date and the
-date it was sent; any stated intention to discontinue, and the date given; every
-reply from the respondent, so response times and gaps are visible; anything after
-the licence ended bearing on liquidated damages or settlement, including offers,
-counter-offers and silence following a demand. A change of contact person is
-worth a line. Leave out routine or administrative traffic.
-
-Never include FAFO's own internal housekeeping — imports, status changes,
-re-indexing, or file counts. That is not correspondence.
-
-If no correspondence has been extracted into the record, say exactly that: state
-that the case documents have not yet been processed into dated entries, not that
+# 4. Correspondence Timeline
+[The exchange between the parties, drawn from CORRESPONDENCE ON RECORD, most
+important points first to last. One paragraph per message, in this form —
+**MM/DD/YYYY (Sender):** what was sent and what it said, in one to three
+sentences. Include the initial notice and the options it presented; every reply,
+so counsel sees timing and responsiveness; any representation later contradicted
+by the evidence; the final pre-referral message. Do not add flags, tags or an
+editorial gloss — state what happened; counsel draws the inferences. Close the
+section with a single line: PDF of this correspondence is on file.
+If no correspondence has been extracted into the record, say exactly that: the
+case documents have not yet been processed into dated entries — do not write that
 no correspondence exists.]
 
-# 3. Evidence
-[One short line per exhibit listed in SCREENSHOT EXHIBITS above, in that order,
-giving the exhibit letter, the platform, the capture date, and what the capture
-shows — which mark appears, on what page or listing. Then end the section with
-the following marker alone on its own line, exactly as written, with nothing
-after it:
-${SCREENSHOT_MARKER}
+# 5. Defenses Raised and Rebuttals
+[Only the defenses the respondent actually raised in the correspondence above.
+For each, a level-2 heading giving the defense in the respondent's own words as a
+short quote, then a tight rebuttal grounded in the record. If none were raised,
+state "No formal defenses raised as of the referral date." — do not invent them.]
 
-Do NOT reproduce the EVIDENCE ON FILE block, a file count, a breakdown by kind,
-a capture-session list, or a document inventory. That block is context for you,
-not content for counsel — the exhibits are what this section supplies.]
+# 6. Current Settlement Position
+[The options presented to the respondent, taken from the settlement field and the
+initial infringement correspondence where the figures were first stated — do not
+recompute them:
+**Option 1 — [name]:** [terms].
+**Option 2 — [name]:** [terms, if a second option exists].
+Then the respondent's stated position (accepted / rejected / silent / invited
+escalation) with its date, and one short paragraph of basis: how the figure was
+arrived at, and whether counsel should consider revising it upward given duration,
+breadth, and any evidence of willfulness. Keep the basis to a few sentences — no
+pricing tables, no arithmetic.]
 
-# 4. Settlement Position
-## 4a. Options Presented
-[From settlement field — parse Option 1 / Option 2 if structured, otherwise present as stated]
-## 4b. Basis for Calculation
-[Three sentences at most. The figures were already stated to the respondent in
-the initial infringement correspondence — take them from the record rather than
-recomputing, and where a second option was offered, give that too. Do not
-reproduce the pricing bands, do not show the arithmetic, and do not add a
-schedule or table.]
-## 4c. Respondent's Stated Position
-[From the most recent correspondence on record: whether they have accepted,
-rejected, gone silent, or stated an intention to keep using the mark. Give the
-position as they put it, with the date they put it, in a sentence or two.]
-## 4d. Note to Counsel
-[Flag duration, breadth, willfulness if second infringement. Recommend upward revision if warranted.]
+# 7. Evidence on File
+[A bulleted inventory of the evidence supporting the matter — the specific
+screenshots and the pages they were captured from with capture dates, the
+correspondence chain, the agreement(s), the public pages relied on. Curate it;
+this is the exhibit list counsel will work from, not a raw file dump. Then, on the
+lines that follow, list each screenshot exhibit from SCREENSHOT EXHIBITS above —
+exhibit letter, platform, capture date, and what it shows — and end the section
+with the following marker alone on its own line, exactly as written, nothing after
+it:
+${SCREENSHOT_MARKER}]
 
 ---
-Prepared by: Jonathan D. Pendergrass, CLO | The Paleo Foundation | jonathand@paleofoundation.org | ${usDate(c.todayIso)}
-FAFO Workflow | Paleo Certified, Inc. dba The Paleo Foundation`
+Prepared by: Jonathan D. Pendergrass, CLO | The Paleo Foundation | jonathand@paleofoundation.org | ${usDate(c.todayIso)}`
 }

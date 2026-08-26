@@ -1,12 +1,12 @@
 /**
  * Local PDF and standalone-HTML rendering for letters and referrals.
  *
- * The Drive path renders true brand styling through Google Docs, but it needs a
- * live Cloud Run service and a Google refresh token that has now expired twice.
- * A referral going to outside counsel should not be hostage to either, so this
- * renders the same branded markup through Chromium instead: Georgia and Calibri
- * are present on macOS, so fidelity holds, and the captures ride inline as
- * data URIs rather than being staged anywhere.
+ * The Drive path renders through Google Docs, but it needs a live Cloud Run
+ * service and a Google refresh token that has now expired twice. A referral
+ * going to outside counsel should not be hostage to either, so this renders the
+ * same house-style markup through Chromium instead — matching the approved
+ * artifact-era referral: a centered title block, two-tone blue section
+ * headings, a clean sans body, and the captures inline as data URIs.
  */
 
 import fs from 'node:fs'
@@ -14,27 +14,36 @@ import path from 'node:path'
 import { letterToHtml } from './letters'
 import type { EncodedExhibit } from './referralShots'
 
-const NAVY = '#26366C'
-const SLATE = '#2B3540'
+// The Paleo Foundation referral house style, taken from the approved artifact-era
+// document: a two-tone blue heading scale on a clean page, no rules.
+const H1BLUE = '#1F3864' // section headings (Heading 1)
+const H2BLUE = '#2E5496' // subsection headings (Heading 2)
+const INK = '#20242B' // body text
+const MUTE = '#5A6672' // captions and the title subtitle
 
 /** US Letter with one-inch margins, matching the Docs template. */
 const PAGE_CSS = `
   @page { size: Letter; margin: 1in; }
   body {
-    font-family: Calibri, "Avenir Next", Helvetica, Arial, sans-serif;
-    font-size: 10.5pt; line-height: 1.45; color: ${SLATE};
+    font-family: Calibri, "Aptos", "Avenir Next", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt; line-height: 1.45; color: ${INK};
     margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  h1 { font-family: Georgia, serif; font-size: 22pt; font-weight: normal; color: ${NAVY};
-       border-bottom: 2px solid ${NAVY}; padding-bottom: 4pt;
-       margin: 20pt 0 6pt; break-after: avoid; }
-  h1:first-of-type { margin-top: 0; }
-  h2 { font-family: Georgia, serif; font-size: 16pt; font-weight: normal; color: ${NAVY};
-       margin: 16pt 0 4pt; break-after: avoid; }
-  h3 { font-size: 12pt; font-weight: bold; color: ${SLATE}; margin: 10pt 0 2pt; break-after: avoid; }
+  /* Section headings: bold blue, no rule — the reference document's look. */
+  h1.fafo-h1 { font-size: 15pt; font-weight: bold; color: ${H1BLUE};
+       margin: 22pt 0 6pt; break-after: avoid; }
+  h2.fafo-h2 { font-size: 12.5pt; font-weight: bold; color: ${H2BLUE};
+       margin: 14pt 0 3pt; break-after: avoid; }
+  h3.fafo-h3 { font-size: 11pt; font-weight: bold; color: ${INK}; margin: 10pt 0 2pt; break-after: avoid; }
+  /* Centered title block: title, "v." party stack, referral date. */
+  .fafo-titleblock { text-align: center; margin: 0 0 8pt; }
+  .fafo-titleblock h1.fafo-h1 { font-size: 17pt; margin: 0 0 2pt; }
+  .fafo-titleblock p { margin: 1pt 0; color: ${MUTE}; }
+  .fafo-titleblock strong { color: ${INK}; }
   p { margin: 0 0 6pt; }
   ul { margin: 0 0 6pt 0; padding-left: 18pt; }
-  hr { border: none; border-bottom: 0.5pt solid ${NAVY}; margin: 8pt 0; }
+  li { margin: 0 0 2pt; }
+  hr { border: none; border-bottom: 0.5pt solid ${H2BLUE}; margin: 8pt 0; }
   /* A capture must not be split across a page boundary, and must stay with the
      caption that dates it — an undated exhibit proves nothing. Capped at 3.4in
      tall so two exhibits and their captions fit on a page: unconstrained, a
@@ -43,7 +52,7 @@ const PAGE_CSS = `
      300dpi, so nothing is lost when counsel zooms in. */
   img.exhibit { display: block; max-width: 100%; max-height: 3.4in; width: auto; height: auto;
                 margin: 10pt auto 2pt; break-inside: avoid; page-break-inside: avoid; }
-  img.exhibit + p { text-align: center; font-size: 9pt; color: ${SLATE};
+  img.exhibit + p, p.fafo-caption { text-align: center; font-size: 9pt; color: ${MUTE};
                     break-before: avoid; page-break-before: avoid; }
 `
 

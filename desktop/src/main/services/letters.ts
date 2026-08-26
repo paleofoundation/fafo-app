@@ -545,8 +545,9 @@ export function markLetterSent(db: Database.Database, letterId: number): LetterR
 
 // Brand palette, matching the proven Drive output (FORMAT TEST.html) and the
 // docs-mcp renderer: navy display headings, slate section headings.
-const NAVY = '#26366C'
-const SLATE = '#2B3540'
+// Heading and caption colour now live in the renderers' stylesheets (letterPdf
+// PAGE_CSS for local, the docs-mcp server for Drive) — letterToHtml emits class
+// hooks only, so the two paths cannot drift apart in their inline styles.
 
 
 /**
@@ -595,12 +596,11 @@ export function letterToHtml(
   // prepending the document title stacked two bordered H1s on the first page.
   // Only supply a title heading when the body does not already start with one.
   const startsWithHeading = /^\s*#\s+\S/.test(bodyText)
-  const out: string[] = startsWithHeading
-    ? []
-    : [
-        `<h1 style="font-family:Georgia,serif;color:${NAVY};border-bottom:2px solid ${NAVY}">${esc(title)}</h1>`
-      ]
+  const out: string[] = startsWithHeading ? [] : [`<h1 class="fafo-h1">${esc(title)}</h1>`]
   let paragraph: string[] = []
+  // The referral opens with a centered title block — the title line plus the
+  // "v." party stack — held open until the first numbered section begins.
+  let titleOpen = false
 
   // The drafter is told to close §3b with the marker. If it dropped the line —
   // or an older letter predates the convention — the captures still have to
@@ -608,7 +608,14 @@ export function letterToHtml(
   const source = placeExhibits(bodyText, exhibits)
   const flush = (): void => {
     if (paragraph.length === 0) return
-    out.push(`<p>${paragraph.map(inline).join('<br/>')}</p>`)
+    // In the title block each line is its own paragraph, so the "v." party
+    // stack centres line-by-line and the docs-mcp parser (which drops <br/>)
+    // keeps the breaks. Elsewhere the lines join with <br/> as one paragraph.
+    if (titleOpen) {
+      for (const l of paragraph) out.push(`<p>${inline(l)}</p>`)
+    } else {
+      out.push(`<p>${paragraph.map(inline).join('<br/>')}</p>`)
+    }
     paragraph = []
   }
 
@@ -628,14 +635,22 @@ export function letterToHtml(
       flush()
       const level = heading[1]!.length
       const body = inline(heading[2]!)
+      const numbered = /^\d+\.\s/.test(heading[2]!.trim())
+      // The first heading is the document title; open the centered block. The
+      // first NUMBERED heading ("1. Parties") ends it.
+      if (level === 1 && !numbered && !titleOpen && out.length === 0) {
+        out.push('<div class="fafo-titleblock">')
+        titleOpen = true
+      } else if (titleOpen && (numbered || level >= 2)) {
+        out.push('</div>')
+        titleOpen = false
+      }
       if (level === 1) {
-        out.push(
-          `<h1 style="font-family:Georgia,serif;color:${NAVY};border-bottom:2px solid ${NAVY}">${body}</h1>`
-        )
+        out.push(`<h1 class="fafo-h1">${body}</h1>`)
       } else if (level === 2) {
-        out.push(`<h2 style="font-family:Georgia,serif;color:${SLATE}">${body}</h2>`)
+        out.push(`<h2 class="fafo-h2">${body}</h2>`)
       } else {
-        out.push(`<h3 style="color:${SLATE}">${body}</h3>`)
+        out.push(`<h3 class="fafo-h3">${body}</h3>`)
       }
       continue
     }
@@ -655,7 +670,7 @@ export function letterToHtml(
         const where = ex.platform ? `${ex.platform}, ` : ''
         const when = ex.date ? `captured ${usDate(ex.date)}` : 'capture date not recorded'
         out.push(
-          `<p style="color:${SLATE}"><em>Exhibit ${esc(ex.label)} — ${esc(where)}${esc(when)}</em></p>`
+          `<p class="fafo-caption"><em>Exhibit ${esc(ex.label)} — ${esc(where)}${esc(when)}</em></p>`
         )
       }
       continue
@@ -669,5 +684,7 @@ export function letterToHtml(
     paragraph.push(t)
   }
   flush()
+  // A referral with no numbered sections would leave the title block open.
+  if (titleOpen) out.push('</div>')
   return out.join('\n')
 }
