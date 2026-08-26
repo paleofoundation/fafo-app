@@ -404,6 +404,24 @@ export function registerIpc(): void {
     ...emailExtractionCounts(db, caseId),
     keyPresent: hasSecret(SECRET_ANTHROPIC_API_KEY)
   }))
+  ipcMain.handle('fafo:compileCase', async (_e, caseId: number) => {
+    // One action that reads the whole case folder — screenshots and their dates,
+    // agreements, and the email/letter PDFs — then extracts the correspondence
+    // threads into the timeline. Files first, so a thread that arrived since the
+    // last scan is indexed before extraction looks for it.
+    const files = refreshCaseFiles(db, caseId)
+    const key = getSecret(SECRET_ANTHROPIC_API_KEY)
+    if (!key) throw new Error('No Anthropic API key stored — add one in Settings')
+    const emails = await runEmailExtraction(db, key, 50, {
+      caseId,
+      onProgress: (p) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('fafo:emailExtractionProgress', p)
+        }
+      }
+    })
+    return { files, emails }
+  })
   ipcMain.handle('fafo:runEmailExtraction', async (_e, limit: number, caseId?: number) => {
     const key = getSecret(SECRET_ANTHROPIC_API_KEY)
     if (!key) throw new Error('No Anthropic API key stored — add one in Settings')

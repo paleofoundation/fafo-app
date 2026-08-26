@@ -403,6 +403,68 @@ function InlineField({
   )
 }
 
+/**
+ * Per-section collapse, remembered across cases and launches. The preference is
+ * global by section (collapse "Files" once and it stays collapsed on every
+ * case), which is what a single-user workspace wants — not a state to reset on
+ * every navigation.
+ */
+function useCollapsed(key: string, def = false): readonly [boolean, () => void] {
+  const storeKey = `fafo.collapse.${key}`
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(storeKey)
+      return v === null ? def : v === '1'
+    } catch {
+      return def
+    }
+  })
+  const toggle = useCallback(() => {
+    setCollapsed((c) => {
+      const next = !c
+      try {
+        localStorage.setItem(storeKey, next ? '1' : '0')
+      } catch {
+        /* private mode / storage disabled — collapse still works for the session */
+      }
+      return next
+    })
+  }, [storeKey])
+  return [collapsed, toggle] as const
+}
+
+/** Clickable card header with a disclosure triangle; `right` holds header actions. */
+function CardHead({
+  title,
+  collapsed,
+  onToggle,
+  right
+}: {
+  title: string
+  collapsed: boolean
+  onToggle: () => void
+  right?: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div
+      onClick={onToggle}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        cursor: 'pointer',
+        userSelect: 'none'
+      }}
+    >
+      <span style={{ width: 12, fontSize: 11, color: 'var(--muted)' }}>
+        {collapsed ? '▸' : '▾'}
+      </span>
+      <h2 style={{ margin: 0, flex: 1 }}>{title}</h2>
+      {right && <div onClick={(e) => e.stopPropagation()}>{right}</div>}
+    </div>
+  )
+}
+
 function CaseDetail({
   id,
   onChanged,
@@ -419,6 +481,8 @@ function CaseDetail({
     dueAt: '',
     kind: 'custom'
   })
+  const [dlCollapsed, toggleDl] = useCollapsed('deadlines')
+  const [tlCollapsed, toggleTl] = useCollapsed('timeline')
 
   const load = useCallback(async () => {
     setData(await window.fafo.getCase(id))
@@ -476,34 +540,36 @@ function CaseDetail({
       </div>
 
       <div className="card">
-        <h2>Deadlines</h2>
-        {data.deadlines.length === 0 && <div className="empty">No deadlines attached to this case.</div>}
-        {data.deadlines.map((d) => (
-          <div key={d.id} className="deadline-row">
-            <span className="deadline-date">{usDate(d.dueAt)}</span>
-            <span className="deadline-title">{d.title}</span>
-            {d.satisfiedAt && <span className="pill done">done</span>}
+        <CardHead title="Deadlines" collapsed={dlCollapsed} onToggle={toggleDl} />
+        {!dlCollapsed && (
+          <div style={{ marginTop: 10 }}>
+            {data.deadlines.length === 0 && <div className="empty">No deadlines attached to this case.</div>}
+            {data.deadlines.map((d) => (
+              <div key={d.id} className="deadline-row">
+                <span className="deadline-date">{usDate(d.dueAt)}</span>
+                <span className="deadline-title">{d.title}</span>
+                {d.satisfiedAt && <span className="pill done">done</span>}
+              </div>
+            ))}
+            <div className="add-row">
+              <input type="text" placeholder="New deadline…" value={dl.title} onChange={(e) => setDl({ ...dl, title: e.target.value })} />
+              <input type="date" value={dl.dueAt} onChange={(e) => setDl({ ...dl, dueAt: e.target.value })} />
+              <select value={dl.kind} onChange={(e) => setDl({ ...dl, kind: e.target.value as DeadlineKind })}>
+                <option value="custom">custom</option>
+                <option value="selloff_end">sell-off end</option>
+                <option value="letter_response">letter response</option>
+                <option value="patrol_spot_check">spot check</option>
+                <option value="review">review</option>
+              </select>
+              <button className="outline" onClick={() => void addDeadline()}>
+                Add
+              </button>
+            </div>
           </div>
-        ))}
-        <div className="add-row">
-          <input type="text" placeholder="New deadline…" value={dl.title} onChange={(e) => setDl({ ...dl, title: e.target.value })} />
-          <input type="date" value={dl.dueAt} onChange={(e) => setDl({ ...dl, dueAt: e.target.value })} />
-          <select value={dl.kind} onChange={(e) => setDl({ ...dl, kind: e.target.value as DeadlineKind })}>
-            <option value="custom">custom</option>
-            <option value="selloff_end">sell-off end</option>
-            <option value="letter_response">letter response</option>
-            <option value="patrol_spot_check">spot check</option>
-            <option value="review">review</option>
-          </select>
-          <button className="outline" onClick={() => void addDeadline()}>
-            Add
-          </button>
-        </div>
+        )}
       </div>
 
       <LicenseCard caseId={id} />
-
-      <FilesCard caseId={id} onChanged={load} />
 
       <PaymentsCard
         caseId={id}
@@ -514,12 +580,12 @@ function CaseDetail({
         }}
       />
 
-      <SettlementCard caseId={id} />
-
       <LettersCard caseId={id} onChanged={onChanged} />
 
       <div className="card">
-        <h2>Timeline</h2>
+        <CardHead title="Timeline" collapsed={tlCollapsed} onToggle={toggleTl} />
+        {!tlCollapsed && (
+        <div style={{ marginTop: 10 }}>
         {data.events.map((e) => (
           <div key={e.id} className="timeline-item">
             <span className="timeline-date">{usDate(e.at)}</span>
@@ -541,7 +607,16 @@ function CaseDetail({
             Add
           </button>
         </div>
+        </div>
+        )}
       </div>
+
+      {/* Reference material for the matter, kept at the bottom of the panel:
+          the case's files and the settlement math are consulted less often than
+          its status, deadlines, correspondence and letters. */}
+      <FilesCard caseId={id} onChanged={load} />
+
+      <SettlementCard caseId={id} />
     </div>
   )
 }
@@ -558,6 +633,7 @@ const money = (n: number): string => `$${Math.round(n).toLocaleString()}`
  */
 function LicenseCard({ caseId }: { caseId: number }): React.JSX.Element | null {
   const [facts, setFacts] = useState<CaseLicenseFacts | null | undefined>(undefined)
+  const [collapsed, toggle] = useCollapsed('license')
 
   useEffect(() => {
     let live = true
@@ -611,31 +687,35 @@ function LicenseCard({ caseId }: { caseId: number }): React.JSX.Element | null {
 
   return (
     <div className="card">
-      <h2>License agreement</h2>
-      {rows.map(([label, value]) => (
-        <div key={label} className="field-row">
-          <span className="field-label">{label}</span>
-          <span style={{ flex: 1 }}>{value}</span>
-        </div>
-      ))}
-      {facts.marks.length > 0 && (
-        <div className="field-row">
-          <span className="field-label">Marks licensed</span>
-          <span style={{ flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {facts.marks.map((m) => (
-              <span key={m.code} className="pill mark" title={`Reg. ${m.regNo} (${m.regStatus})`}>
-                {m.code}
+      <CardHead title="License agreement" collapsed={collapsed} onToggle={toggle} />
+      {!collapsed && (
+        <div style={{ marginTop: 10 }}>
+          {rows.map(([label, value]) => (
+            <div key={label} className="field-row">
+              <span className="field-label">{label}</span>
+              <span style={{ flex: 1 }}>{value}</span>
+            </div>
+          ))}
+          {facts.marks.length > 0 && (
+            <div className="field-row">
+              <span className="field-label">Marks licensed</span>
+              <span style={{ flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {facts.marks.map((m) => (
+                  <span key={m.code} className="pill mark" title={`Reg. ${m.regNo} (${m.regStatus})`}>
+                    {m.code}
+                  </span>
+                ))}
               </span>
-            ))}
-          </span>
+            </div>
+          )}
+          <p className="deadline-meta" style={{ margin: '4px 0 0' }}>
+            {facts.vintage ? `${facts.vintage} template` : 'vintage unknown'}
+            {facts.agreementRef && ` · ${facts.agreementRef}`}
+            {facts.extractionConfidence !== null &&
+              ` · extraction confidence ${Math.round(facts.extractionConfidence * 100)}%`}
+          </p>
         </div>
       )}
-      <p className="deadline-meta" style={{ margin: '4px 0 0' }}>
-        {facts.vintage ? `${facts.vintage} template` : 'vintage unknown'}
-        {facts.agreementRef && ` · ${facts.agreementRef}`}
-        {facts.extractionConfidence !== null &&
-          ` · extraction confidence ${Math.round(facts.extractionConfidence * 100)}%`}
-      </p>
     </div>
   )
 }
@@ -784,6 +864,7 @@ function FilesCard({
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [collapsed, toggle] = useCollapsed('files')
 
   const load = useCallback(async () => {
     setData(await window.fafo.listCaseFiles(caseId))
@@ -850,19 +931,24 @@ function FilesCard({
 
   return (
     <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Files</h2>
-        {data.folderPath ? (
-          <button className="subtle" disabled={busy} onClick={() => void refresh()}>
-            {busy ? 'Reading…' : 'Refresh from folder'}
-          </button>
-        ) : (
-          <button className="subtle" disabled={busy} onClick={() => void link()}>
-            Link folder…
-          </button>
-        )}
-      </div>
-
+      <CardHead
+        title="Files"
+        collapsed={collapsed}
+        onToggle={toggle}
+        right={
+          data.folderPath ? (
+            <button className="subtle" disabled={busy} onClick={() => void refresh()}>
+              {busy ? 'Reading…' : 'Refresh from folder'}
+            </button>
+          ) : (
+            <button className="subtle" disabled={busy} onClick={() => void link()}>
+              Link folder…
+            </button>
+          )
+        }
+      />
+      {!collapsed && (
+      <div style={{ marginTop: 10 }}>
       {data.folderPath && (
         <p className="deadline-meta" style={{ margin: '6px 0 0', wordBreak: 'break-all' }}>
           {shortFolder(data.folderPath)}
@@ -944,6 +1030,8 @@ function FilesCard({
           reference is kept rather than deleted — usually the folder moved.
         </p>
       )}
+      </div>
+      )}
     </div>
   )
 }
@@ -975,6 +1063,7 @@ function PaymentsCard({
   onChanged: () => Promise<void>
 }): React.JSX.Element {
   const blank = { amount: '', date: '', received: true, credit: 'case' as 'case' | 'JP' | 'Trestle' }
+  const [collapsed, toggle] = useCollapsed('payments')
   const [rows, setRows] = useState<CasePayment[] | null>(null)
   const [form, setForm] = useState(blank)
   const [dup, setDup] = useState<DuplicatePaymentMatch | null>(null)
@@ -1103,7 +1192,9 @@ function PaymentsCard({
 
   return (
     <div className="card">
-      <h2>Payments</h2>
+      <CardHead title="Payments" collapsed={collapsed} onToggle={toggle} />
+      {!collapsed && (
+      <div style={{ marginTop: 10 }}>
       {rows === null && <div className="empty">Loading…</div>}
       {rows !== null && rows.length === 0 && (
         <div className="empty">No payments recorded. Received payments feed the metrics.</div>
@@ -1358,6 +1449,8 @@ function PaymentsCard({
           Expected payments are recorded here but excluded from the metrics until you mark them
           received.
         </p>
+      )}
+      </div>
       )}
     </div>
   )
@@ -1787,6 +1880,7 @@ function DeleteCase({
 }
 
 function SettlementCard({ caseId }: { caseId: number }): React.JSX.Element {
+  const [collapsed, toggle] = useCollapsed('settlement')
   const [quote, setQuote] = useState<SettlementQuote | null>(null)
   const [through, setThrough] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -1810,7 +1904,9 @@ function SettlementCard({ caseId }: { caseId: number }): React.JSX.Element {
 
   return (
     <div className="card">
-      <h2>Settlement calculator</h2>
+      <CardHead title="Settlement calculator" collapsed={collapsed} onToggle={toggle} />
+      {!collapsed && (
+      <div style={{ marginTop: 10 }}>
       <div className="add-row">
         <input
           type="date"
@@ -1837,6 +1933,8 @@ function SettlementCard({ caseId }: { caseId: number }): React.JSX.Element {
           <p className="subtitle" style={{ marginTop: 6, marginBottom: 0 }}>{quote.notes}</p>
         </div>
       )}
+      </div>
+      )}
     </div>
   )
 }
@@ -1852,6 +1950,8 @@ function LettersCard({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState<number | null>(null)
+  const [compileNote, setCompileNote] = useState<string | null>(null)
+  const [collapsed, toggle] = useCollapsed('letters')
 
   const load = useCallback(async () => {
     setLetters(await window.fafo.listLetters(caseId))
@@ -1887,10 +1987,48 @@ function LettersCard({
     setBusy(null)
   }
 
+  async function compile(): Promise<void> {
+    setBusy('compile')
+    setError(null)
+    setCompileNote(null)
+    try {
+      const r = await window.fafo.compileCase(caseId)
+      const bits: string[] = []
+      bits.push(
+        r.files.filesAdded > 0
+          ? `${r.files.filesAdded} new file${r.files.filesAdded === 1 ? '' : 's'} indexed`
+          : `folder up to date (${r.files.filesSeen} file${r.files.filesSeen === 1 ? '' : 's'})`
+      )
+      if (r.emails.ok > 0)
+        bits.push(
+          `${r.emails.ok} thread${r.emails.ok === 1 ? '' : 's'} read → ${r.emails.eventsWritten} timeline entr${r.emails.eventsWritten === 1 ? 'y' : 'ies'}`
+        )
+      if (r.emails.skipped > 0) bits.push(`${r.emails.skipped} skipped as bulk mail`)
+      if (r.emails.failed > 0) bits.push(`${r.emails.failed} unreadable`)
+      if (r.emails.remaining > 0) bits.push(`${r.emails.remaining} still to read — run again`)
+      setCompileNote(bits.join(' · '))
+      await load()
+      await onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(null)
+  }
+
   return (
     <div className="card">
-      <h2>Letters &amp; referrals</h2>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <CardHead title="Letters &amp; referrals" collapsed={collapsed} onToggle={toggle} />
+      {!collapsed && (
+      <div style={{ marginTop: 10 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          className="outline"
+          disabled={busy !== null}
+          title="Read the whole case folder — screenshots and their dates, agreements, and every email/letter thread — into the timeline, in one pass. Run this before drafting a referral."
+          onClick={() => void compile()}
+        >
+          {busy === 'compile' ? 'Compiling…' : 'Compile case'}
+        </button>
         <button
           className="outline"
           disabled={busy !== null}
@@ -1934,6 +2072,11 @@ function LettersCard({
           </button>
         )}
       </div>
+      {compileNote && (
+        <p className="deadline-meta" style={{ margin: '8px 0 0' }}>
+          {compileNote}
+        </p>
+      )}
       {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: 12.5 }}>{error}</p>}
       {letters.length === 0 && <div className="empty">No drafts yet.</div>}
       {letters.map((l) => (
@@ -2041,6 +2184,8 @@ function LettersCard({
           )}
         </div>
       ))}
+      </div>
+      )}
     </div>
   )
 }

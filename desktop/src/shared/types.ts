@@ -399,6 +399,11 @@ export interface EmailExtractionResult {
   remaining: number
 }
 
+export interface CompileCaseResult {
+  files: FolderRefresh
+  emails: EmailExtractionResult
+}
+
 export interface EmailExtractionProgress {
   processed: number
   total: number
@@ -771,6 +776,7 @@ export interface FafoApi {
   ): Promise<CaseMergeResult>
   duplicateCaseSuggestions(): Promise<DuplicateSuggestion[]>
   emailExtractionStatus(caseId?: number): Promise<EmailExtractionStatus>
+  compileCase(caseId: number): Promise<CompileCaseResult>
   runEmailExtraction(limit: number, caseId?: number): Promise<EmailExtractionResult>
   onEmailExtractionProgress(cb: (p: EmailExtractionProgress) => void): () => void
   caseLicenseFacts(caseId: number): Promise<CaseLicenseFacts | null>

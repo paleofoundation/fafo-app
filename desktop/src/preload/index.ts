@@ -75,6 +75,7 @@ const api: FafoApi = {
     ipcRenderer.invoke('fafo:mergeCases', primaryId, duplicateId, mergeLicensee),
   duplicateCaseSuggestions: () => ipcRenderer.invoke('fafo:duplicateCaseSuggestions'),
   emailExtractionStatus: (caseId) => ipcRenderer.invoke('fafo:emailExtractionStatus', caseId),
+  compileCase: (caseId) => ipcRenderer.invoke('fafo:compileCase', caseId),
   runEmailExtraction: (limit, caseId) =>
     ipcRenderer.invoke('fafo:runEmailExtraction', limit, caseId),
   onEmailExtractionProgress: (cb) => {

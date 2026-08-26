@@ -87,6 +87,11 @@ function classifyFile(filePath: string, parentLabel: string | null): ScannedFile
   if (['.png', '.jpg', '.jpeg', '.webp', '.jp2', '.heic'].includes(ext)) return 'screenshot'
   if (['.mp4', '.mov'].includes(ext)) return 'video'
   if (ext === '.eml') return 'email'
+  // A reply/forward prefix marks an email thread, even when the subject carries
+  // a letter keyword: "Re Notice of Infringement …" is correspondence, not a
+  // demand letter, and must reach email extraction rather than being filed away.
+  if (/^(re|fwd?|fw)[\s:_-]/i.test(base) && ['.pdf', '.docx', '.doc', '.eml'].includes(ext))
+    return 'email'
   if (/agreement/.test(base)) return 'agreement'
   if (/(complaint|motion|declaration|proposed order|judgment)/.test(base)) return 'court'
   if (/(c&d|cease|demand|notice of infringement|termination|settlement)/.test(base)) return 'letter'
