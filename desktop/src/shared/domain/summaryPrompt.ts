@@ -180,19 +180,31 @@ MASTER REFERENCE CONTEXT:
 ${MASTER_REF}
 
 REQUIRED OUTPUT STRUCTURE — follow this seven-section format exactly. It is the
-Paleo Foundation house standard for a legal referral. Populate every section from
-the case data above. Be economical: every sentence must carry a fact or an
-argument — no throat-clearing, no restating the obvious, no filler. Aim for the
-density of a good memo, not the length of a brief.
+Paleo Foundation house standard for a legal referral.
 
-Emit the title block exactly as these six lines, each on its own line, nothing
-else before them:
+WRITE SHORT. This is a one- to two-page briefing a busy attorney reads once, not
+a brief. Rules, in order of importance:
+ - State each fact and each argument ONCE, in the one section it belongs to.
+   Never restate a date, a contract clause, or a point you have already made in
+   another section. If E.3.d is explained in Background, later sections refer to
+   it in a few words, not by re-explaining it.
+ - One or two sentences per point. Cut every clause that does not carry a new
+   fact. No preamble, no summarising what you are about to say, no "it should be
+   noted that", no closing recap.
+ - Use PLAIN TEXT only. Do NOT use bold, asterisks (**), underlining, or any
+   markup for emphasis anywhere in the body — not on dates, names, field labels,
+   section numbers, options, contract references, or file names. The section
+   headings (the "# 1." lines) are the only styled text; everything else is
+   plain. Write "Legal Entity: Acme Inc.", never "**Legal Entity:** Acme Inc.".
+
+Emit the title block exactly as these six lines, each on its own line, in plain
+text with no bold, nothing else before them:
 
 # LEGAL REFERRAL SUMMARY
 Trademark Infringement Matter
-**Paleo Certified, Inc. dba The Paleo Foundation**
+Paleo Certified, Inc. dba The Paleo Foundation
 v.
-**${c.infringer}**
+${c.infringer}
 Date of Referral: ${usDate(c.todayIso)}
 
 DO NOT emit a protocol line, an internal case-opened date, a case-handler line, a
@@ -209,16 +221,19 @@ approximately. Every date is MM/DD/YYYY.
 
 # 1. Parties
 ## Licensor / Complainant
-**Name:** Paleo Certified, Inc. dba The Paleo Foundation
-**Contact:** Jonathan D. Pendergrass, CLO | Legal
-**Email:** jonathand@paleofoundation.org
-**Website:** https://paleofoundation.com/
+Name: Paleo Certified, Inc. dba The Paleo Foundation
+Contact: Jonathan D. Pendergrass, CLO | Legal
+Email: jonathand@paleofoundation.org
+Website: https://paleofoundation.com/
 ## Respondent
-[Bold-labelled lines, one per line, drawn from the case data: **Legal Entity**,
-**Operating Name** (if it trades under a different name), **Jurisdiction**,
-**Primary Contact** (name and email), **Secondary Contact** (if a second person
-is on the correspondence), **Websites**. Use the verified facts and the latest
-correspondence; omit a label rather than guessing at it.]
+[Plain "Label: value" lines, one per line, no bold: Legal Entity; Operating Name
+(only if it trades under a different name); Jurisdiction; Primary Contact (name
+and email); Secondary Contact (only if a second respondent-side person is on the
+correspondence); Websites. Use the verified facts and the latest correspondence,
+and omit a label rather than guessing at it. List ONLY the infringing party's own
+people. Never list a paleofoundation.org or paleofoundation.com address, or any
+Paleo Foundation staff member, as a contact — those are the complainant's own
+side and do not belong in the respondent's details.]
 
 # 2. Background
 ## Original License Agreement
@@ -250,45 +265,50 @@ the certification, packaging, retail listings, dated social posts.]
 non-certified products, etc. Cite the section. Omit if the record has none.]
 
 # 4. Correspondence Timeline
-[The exchange between the parties, drawn from CORRESPONDENCE ON RECORD, most
-important points first to last. One paragraph per message, in this form —
-**MM/DD/YYYY (Sender):** what was sent and what it said, in one to three
-sentences. Include the initial notice and the options it presented; every reply,
-so counsel sees timing and responsiveness; any representation later contradicted
-by the evidence; the final pre-referral message. Do not add flags, tags or an
-editorial gloss — state what happened; counsel draws the inferences. Close the
-section with a single line: PDF of this correspondence is on file.
+[A short dated list of what happened, oldest first, one line per event in plain
+text with no bold, in this form:
+  MM/DD/YYYY (Sender): what happened, in one sentence.
+Give the sender's NAME only, never their email address. The record labels each
+message "Name email:" — use just the name.
+Keep it tight. Merge same-day back-and-forth into a single line. Leave out
+routine or procedural messages (acknowledgements, "please send documentation",
+auto-replies) — include a message only if it moves the matter: the initial
+notice and the offer it made, a substantive reply or counter-offer, a
+representation later contradicted, a missed deadline, the final pre-referral
+message. Aim for the fewest lines that tell the story, not a transcript. Do not
+add flags, tags, or gloss. Close with a single line: PDF of this correspondence
+is on file.
 If no correspondence has been extracted into the record, say exactly that: the
 case documents have not yet been processed into dated entries — do not write that
 no correspondence exists.]
 
 # 5. Defenses Raised and Rebuttals
-[Only the defenses the respondent actually raised in the correspondence above.
-For each, a level-2 heading giving the defense in the respondent's own words as a
-short quote, then a tight rebuttal grounded in the record. If none were raised,
-state "No formal defenses raised as of the referral date." — do not invent them.]
+[Only the defenses the respondent actually raised. For each, a level-2 heading
+with the defense in the respondent's own words as a short quote, then a one- or
+two-sentence rebuttal grounded in the record. Do not re-explain contract clauses
+already covered above — cite them in a few words. If none were raised, write the
+single line: No formal defenses raised as of the referral date. Do not invent
+them.]
 
 # 6. Current Settlement Position
-[The options presented to the respondent, taken from the settlement field and the
-initial infringement correspondence where the figures were first stated — do not
-recompute them:
-**Option 1 — [name]:** [terms].
-**Option 2 — [name]:** [terms, if a second option exists].
-Then the respondent's stated position (accepted / rejected / silent / invited
-escalation) with its date, and one short paragraph of basis: how the figure was
-arrived at, and whether counsel should consider revising it upward given duration,
-breadth, and any evidence of willfulness. Keep the basis to a few sentences — no
-pricing tables, no arithmetic.]
+[Plain text, no bold. The options presented to the respondent, taken from the
+settlement field and the figures already stated in correspondence — do not
+recompute them. One line each:
+  Option 1 — [name]: [terms].
+  Option 2 — [name]: [terms, only if a second option exists].
+Then one line for the respondent's stated position (accepted / rejected / silent
+/ invited escalation) with its date, and at most two sentences of basis for the
+figure and whether counsel should consider revising it up. No pricing tables, no
+arithmetic, no re-explaining clauses.]
 
 # 7. Evidence on File
-[A bulleted inventory of the evidence supporting the matter — the specific
-screenshots and the pages they were captured from with capture dates, the
-correspondence chain, the agreement(s), the public pages relied on. Curate it;
-this is the exhibit list counsel will work from, not a raw file dump. Then, on the
-lines that follow, list each screenshot exhibit from SCREENSHOT EXHIBITS above —
-exhibit letter, platform, capture date, and what it shows — and end the section
-with the following marker alone on its own line, exactly as written, nothing after
-it:
+[A short bulleted list of the evidence, no bold — the screenshots and the pages
+they came from with capture dates, the correspondence chain, the agreement(s),
+the key public pages. Curate it; this is an exhibit list, not a file dump. Then
+list each screenshot exhibit from SCREENSHOT EXHIBITS above — exhibit letter,
+platform, capture date, and in a few words what it shows — and end the section
+with the following marker alone on its own line, exactly as written, nothing
+after it:
 ${SCREENSHOT_MARKER}]
 
 ---

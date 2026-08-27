@@ -282,8 +282,9 @@ describe('prompt builders (verbatim protocol carry-over)', () => {
       payments: [], screenshots: [],
       evidence: { total: 0, byKind: [], documents: [], captureSessions: [], earliest: null, latest: null }
     })
-    expect(p).toContain('Do not add flags, tags or an')
+    expect(p).toContain('add flags, tags, or gloss')
     expect(p).toContain('DO NOT emit a protocol line')
+    expect(p).toContain('Do NOT use bold')
   })
 })
 
