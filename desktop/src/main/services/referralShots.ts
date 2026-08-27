@@ -57,18 +57,68 @@ function cleanPlatform(label: string): string | null {
  * The session folder is the fallback, and mtime the last resort — mtime moves
  * when a file is copied, so it is evidence of filing, not of capture.
  */
-export function captureDateOf(row: ShotRow): string | null {
-  const name = path.basename(row.path)
-  const dashed = name.match(/(20\d{2})-(\d{2})-(\d{2})/)
-  const packed = name.match(/(?:^|[^\d])(20\d{2})(\d{2})(\d{2})(?:[^\d]|$)/)
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+}
+const pad = (n: number): string => String(n).padStart(2, '0')
+
+/**
+ * Pull a date out of a file or folder name.
+ *
+ * Three shapes appear in the archive: ISO (2026-07-19), packed
+ * (PXL_20260719_…, the phone-camera and screenshot convention), and long form
+ * ("Order - July 19, 2026", "Sept 14 2021"). The long form is why the July 19
+ * test-purchase folder read as undated — the scanner only knew the first two.
+ */
+export function parseNameDate(s: string): string | null {
+  const named = s.match(
+    /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})/i
+  )
+  if (named) {
+    const mo = MONTHS[named[1]!.toLowerCase().slice(0, 3)]!
+    const day = Number(named[2])
+    if (day >= 1 && day <= 31) return `${named[3]}-${pad(mo)}-${pad(day)}`
+  }
+  const dashed = s.match(/(20\d{2})-(\d{2})-(\d{2})/)
+  const packed = s.match(/(?:^|[^\d])(20\d{2})(\d{2})(\d{2})(?:[^\d]|$)/)
   const m = dashed ?? packed
   if (m) {
     const [, y, mo, d] = m
-    const month = Number(mo)
-    const day = Number(d)
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) return `${y}-${mo}-${d}`
+    if (Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31)
+      return `${y}-${mo}-${d}`
   }
-  return row.datedAt ?? (row.mtime ? row.mtime.slice(0, 10) : null)
+  return null
+}
+
+/**
+ * The date to file a piece of evidence under, best source first: a date parsed
+ * from the scan (folder), then the file's own name, then its parent folder's
+ * name, then the filesystem mtime as a last resort (mtime moves when a file is
+ * copied, so it evidences filing, not capture).
+ */
+export function evidenceDate(
+  fullPath: string,
+  datedAt: string | null,
+  mtime: string | null
+): string | null {
+  return (
+    datedAt ??
+    parseNameDate(path.basename(fullPath)) ??
+    parseNameDate(path.basename(path.dirname(fullPath))) ??
+    (mtime ? mtime.slice(0, 10) : null)
+  )
+}
+
+export function captureDateOf(row: ShotRow): string | null {
+  // Filename first here (not folder), because for exhibit selection the capture
+  // instant in the filename is what orders shots by recency within a session.
+  return (
+    parseNameDate(path.basename(row.path)) ??
+    row.datedAt ??
+    parseNameDate(path.basename(path.dirname(row.path))) ??
+    (row.mtime ? row.mtime.slice(0, 10) : null)
+  )
 }
 
 /** Website and Amazon lead: they are where the certified goods are actually sold. */

@@ -9,7 +9,7 @@ import {
   type ScreenshotExhibit
 } from '../../shared/domain/summaryPrompt'
 import { nextResponseThursday, selloffEnd, usDate } from '../../shared/domain/deadlines'
-import { selectReferralScreenshots } from './referralShots'
+import { evidenceDate, selectReferralScreenshots } from './referralShots'
 
 /**
  * Letter generation (M4). The prompts are the verbatim v1 AMANDA and
@@ -63,7 +63,11 @@ function evidenceManifest(db: Database.Database, caseId: number): EvidenceManife
 
   for (const r of rows) {
     byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1)
-    const date = r.datedAt ?? (r.mtime ? r.mtime.slice(0, 10) : null)
+    // Read the date from the filename and parent folder, not just the stored
+    // dated_at — a test-purchase folder like "Order - July 19, 2026" and phone
+    // photos named PXL_20260719_… carry the date the scan missed, and counsel
+    // needs those dates to weigh a capture against a promise made earlier.
+    const date = r.path ? evidenceDate(r.path, r.datedAt, r.mtime) : r.datedAt
     if (date) dates.push(date)
     if (r.kind === 'screenshot' || r.kind === 'video') {
       if (date) sessions.set(date, (sessions.get(date) ?? 0) + 1)

@@ -7,6 +7,7 @@ import {
   parseEvidenceFolderName
 } from '../../../shared/domain/naming'
 import { findLicenseeByName } from './matching'
+import { parseNameDate } from '../referralShots'
 
 /**
  * Importer for the historical archive at
@@ -154,7 +155,10 @@ function walkCaseFolder(folderPath: string): {
           size: stat.size,
           mtime: stat.mtime.toISOString(),
           kind: classifyFile(full, parentLabel),
-          datedAt
+          // Fall back to a date in the file's own name (PXL_20260719_…) or its
+          // folder ("Order - July 19, 2026") when the session parser found none,
+          // so a test-purchase folder is not filed as undated.
+          datedAt: datedAt ?? parseNameDate(entry.name) ?? (parentLabel ? parseNameDate(parentLabel) : null)
         })
       }
     }

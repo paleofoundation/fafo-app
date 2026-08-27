@@ -259,7 +259,16 @@ months, then the platforms and URLs where the mark was used, as a bulleted list.
 ## Evidence of Knowledge and Commercial Benefit
 [What in the record shows the respondent knew of the mark and its obligations,
 and that the mark was doing commercial work — a customer-facing FAQ addressing
-the certification, packaging, retail listings, dated social posts.]
+the certification, packaging, retail listings, dated social posts.
+BROKEN REMEDIATION PROMISE — check this every time, in one or two sentences if it
+applies: scan the correspondence for any representation that the respondent would
+fix the problem (remove, take down, sticker over, cover, relabel, or stop using
+the mark). Compare each such promise's date against the EVIDENCE ON FILE. If any
+capture session, test purchase, or order document postdates the promise, that is
+evidence the promise was not kept — state it with both dates: what was promised
+and when, then the later-dated evidence that contradicts it. A purchase or order
+confirmation dated after a promise to remediate is exactly this contradiction and
+must be surfaced, not left for the reader to find.]
 ## Standards Violation
 [Any use that violates a specific licence provision — the mark shown beside
 non-certified products, etc. Cite the section. Omit if the record has none.]
