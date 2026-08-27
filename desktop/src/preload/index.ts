@@ -54,6 +54,7 @@ const api: FafoApi = {
   exportLetterToDrive: (letterId) => ipcRenderer.invoke('fafo:exportLetterToDrive', letterId),
   saveLetterToFile: (letterId) => ipcRenderer.invoke('fafo:saveLetterToFile', letterId),
   saveLetterToPdf: (letterId) => ipcRenderer.invoke('fafo:saveLetterToPdf', letterId),
+  saveLetterToWord: (letterId) => ipcRenderer.invoke('fafo:saveLetterToWord', letterId),
   scanMailNow: () => ipcRenderer.invoke('fafo:scanMailNow'),
   quoteSettlement: (caseId, observedUseThrough) =>
     ipcRenderer.invoke('fafo:quoteSettlement', caseId, observedUseThrough),

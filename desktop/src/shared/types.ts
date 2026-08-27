@@ -752,6 +752,8 @@ export interface FafoApi {
   saveLetterToFile(letterId: number): Promise<string | null>
   /** Render the letter to a PDF locally — no Drive, captures embedded. */
   saveLetterToPdf(letterId: number): Promise<string | null>
+  /** Render the letter to an editable Word .docx locally — captures embedded. */
+  saveLetterToWord(letterId: number): Promise<string | null>
   scanMailNow(): Promise<MailScanResult>
   quoteSettlement(caseId: number, observedUseThrough?: string): Promise<SettlementQuote>
   /** Opens a file picker; returns null if cancelled. Read-only dry run. */

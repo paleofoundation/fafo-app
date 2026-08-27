@@ -57,6 +57,7 @@ import {
 } from './services/letters'
 import { encodeExhibits } from './services/referralShots'
 import { letterToDocument, letterToPdf } from './services/letterPdf'
+import { letterToDocx } from './services/letterDocx'
 import { createBrandedDoc } from './services/docsMcp'
 import { scanMail } from './services/graphMail'
 import { quoteSettlement } from './services/settlement'
@@ -290,7 +291,7 @@ export function registerIpc(): void {
    * the one document that must still come out when the Google token has
    * expired, which it now has twice.
    */
-  const saveLetterLocally = async (letterId: number, format: 'html' | 'pdf') => {
+  const saveLetterLocally = async (letterId: number, format: 'html' | 'pdf' | 'docx') => {
     const letter = getLetter(db, letterId)
     if (!letter) throw new Error(`Letter ${letterId} not found`)
     const c = db
@@ -304,19 +305,23 @@ export function registerIpc(): void {
     // the rest of the matter already lives.
     const dir =
       c.folder && fs.existsSync(c.folder) ? c.folder : app.getPath('downloads')
+    const filters =
+      format === 'pdf'
+        ? [{ name: 'PDF document', extensions: ['pdf'] }]
+        : format === 'docx'
+          ? [{ name: 'Word document', extensions: ['docx'] }]
+          : [{ name: 'HTML document', extensions: ['html'] }]
     const picked = await dialog.showSaveDialog({
       title: `Save ${label}`,
       defaultPath: path.join(dir, `${safeFilename(title)}.${format}`),
-      filters: [
-        format === 'pdf'
-          ? { name: 'PDF document', extensions: ['pdf'] }
-          : { name: 'HTML document', extensions: ['html'] }
-      ]
+      filters
     })
     if (picked.canceled || !picked.filePath) return null
 
     if (format === 'pdf') {
       fs.writeFileSync(picked.filePath, await letterToPdf(title, letter.bodyText, exhibits))
+    } else if (format === 'docx') {
+      fs.writeFileSync(picked.filePath, await letterToDocx(title, letter.bodyText, exhibits))
     } else {
       fs.writeFileSync(
         picked.filePath,
@@ -338,6 +343,9 @@ export function registerIpc(): void {
   )
   ipcMain.handle('fafo:saveLetterToPdf', (_e, letterId: number) =>
     saveLetterLocally(letterId, 'pdf')
+  )
+  ipcMain.handle('fafo:saveLetterToWord', (_e, letterId: number) =>
+    saveLetterLocally(letterId, 'docx')
   )
   ipcMain.handle('fafo:scanMailNow', async () => scanMail(db, await msAccessToken(db)))
   ipcMain.handle('fafo:quoteSettlement', (_e, caseId: number, observedUseThrough?: string) =>

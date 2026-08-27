@@ -2157,6 +2157,14 @@ function LettersCard({
             <button
               className="subtle"
               disabled={busy !== null}
+              title="Save an editable Word document, screenshots included — for minor edits without regenerating"
+              onClick={() => void act(`word-${l.id}`, () => window.fafo.saveLetterToWord(l.id))}
+            >
+              {busy === `word-${l.id}` ? 'Writing…' : 'Save as Word'}
+            </button>
+            <button
+              className="subtle"
+              disabled={busy !== null}
               title="Save the branded document as HTML — no Drive required"
               onClick={() => void act(`file-${l.id}`, () => window.fafo.saveLetterToFile(l.id))}
             >
